@@ -249,6 +249,8 @@ start the proxy server. The proxy server communicates with prefill node and deco
 ```C
 python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_node_ip:8100 --decode decode_node_ip:8200 --port 8000
 ```
+the architecture is like this:
+![](./assets/architecture.png)
 #### test with request
 the port here should be in line with the port set above.
 ```C
