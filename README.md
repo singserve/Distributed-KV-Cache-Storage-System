@@ -28,17 +28,18 @@ vllm bench serve \
   --backend vllm \
   --model Qwen/Qwen2.5-1.5B-Instruct \
   --dataset-name sharegpt \
-  --dataset-path <your data path>/ShareGPT_V3_unfiltered_cleaned_split.json \
-  --num-prompts 10
+  --dataset-path <your data path>/ShareGPT_V3_unfiltered_cleaned_split.json
 ```
+![](./assets/vllm_online_benchmark.png)
+![](./assets/vllm_online_benchmark2.png)  
 offline benchmarks
 ```C
 vllm bench throughput \
   --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 \
   --dataset-name sonnet \
-  --dataset-path vllm/benchmarks/sonnet.txt \
-  --num-prompts 10
+  --dataset-path vllm/benchmarks/sonnet.txt
 ```
+![](./assets/vllm_offlinebenchmark.png)
 ### Disaggregated Serving with Mooncake-transfer-engine  
 #### installation
 install uv
