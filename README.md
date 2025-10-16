@@ -39,7 +39,7 @@ vllm bench throughput \
   --dataset-name sonnet \
   --dataset-path vllm/benchmarks/sonnet.txt
 ```
-![](./assets/vllm_offlinebenchmark.png)
+![](./assets/vllm_offline_benchmark.png)
 ### Disaggregated Serving with Mooncake-transfer-engine  
 #### installation
 install uv
