@@ -61,20 +61,20 @@ install mooncake-transfer-engine
 uv pip3 install mooncake-transfer-engine
 ```
 #### configuartion
-using 2 machines for decode and prefill node. set proxy metadata server on prefill machine.
+using 2 machines for decode and prefill node. set metadata server on prefill machine.
 prepare a same `mooncake.json` file for both prefill and decode node.
 ```C
 {
   "prefill_url": "prefill_node_ip:3300",
   "decode_url": "decode_node_ip:3300",
-  "metadata_server": "prefill_node_ip:etcd_port",
+  "metadata_server": "metadata_server_ip:etcd_port",
   "metadata_backend": "etcd",
   "protocol": "tcp",
   "device_name": ""
 }
 ```
 #### run serving
-start etcd server
+start etcd server (metadata server) for transfer engine. The metadata server must be accessible from all nodes in the cluster, so its listening IP should be set to `0.0.0.0`. It can run on any machine accessible to all Mooncake nodes - it doesn't need to be co-located with the Master service or storage nodes. 
 ```C
 etcd --listen-client-urls http://0.0.0.0:etcd_port --advertise-client-urls http://metadata_server_ip:etcd_port
 ```
@@ -198,7 +198,7 @@ prepare a `mooncake.json` file for prefill node.
 ```C
 {
     "local_hostname": "prefill_node_ip",
-    "metadata_server": "etcd://prefill_node_ip:etcd_port",
+    "metadata_server": "etcd://metadata_server_ip:etcd_port",
     "protocol": "tcp",
     "device_name": "",
     "master_server_address": "prefill_node_ip:50001"
@@ -208,22 +208,22 @@ prepare a `mooncake.json` file for decode node.
 ```C
 {
     "local_hostname": "decode_node_ip",
-    "metadata_server": "etcd://prefill_node_ip:etcd_port",
+    "metadata_server": "etcd://metadata_server_ip:etcd_port",
     "protocol": "tcp",
     "device_name": "",
     "master_server_address": "prefill_node_ip:50001"
 }
 ```
 #### start serving
-Start the etcd server
+start etcd server (metadata server) for transfer engine. The metadata server must be accessible from all nodes in the cluster, so its listening IP should be set to `0.0.0.0`. It can run on any machine accessible to all Mooncake nodes - it doesn't need to be co-located with the Master service or storage nodes. 
 ```C
-etcd --listen-client-urls http://0.0.0.0:etcd_port --advertise-client-urls http://master_server_ip:etcd_port
+etcd --listen-client-urls http://0.0.0.0:etcd_port --advertise-client-urls http://metadata_server_ip:etcd_port
 ```
-Start the mooncake_master server
+Start the mooncake_master server, default is 50051
 ```C
 mooncake_master --port 50001
 ```
-start the prefill node
+start the prefill node, the port here is used as the vLLM OpenAI API server ports for prefill nodes.
 ```C
 MOONCAKE_CONFIG_PATH=./mooncake.json \
 VLLM_USE_V1=0 \
@@ -234,7 +234,7 @@ python3 -m vllm.entrypoints.openai.api_server \
 --gpu-memory-utilization 0.8 \
 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
 ```
-start the decode node
+start the decode node, the port here is used as the vLLM OpenAI API server ports for decode nodes.
 ```C
 MOONCAKE_CONFIG_PATH=./mooncake.json \
 VLLM_USE_V1=0 \
@@ -245,11 +245,12 @@ python3 -m vllm.entrypoints.openai.api_server \
 --gpu-memory-utilization 0.8 \
 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
 ```
-start the proxy server
+start the proxy server. The proxy server communicates with prefill node and decode node to forward requests. The port here should be in line with the port set above.
 ```C
 python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_node_ip:8100 --decode decode_node_ip:8200 --port 8000
 ```
 #### test with request
+the port here should be in line with the port set above.
 ```C
 curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json" -d '{
   "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
