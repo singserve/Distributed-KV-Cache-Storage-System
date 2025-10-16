@@ -67,7 +67,7 @@ prepare a same `mooncake.json` file for both prefill and decode node.
 {
   "prefill_url": "prefill_node_ip:3300",
   "decode_url": "decode_node_ip:3300",
-  "metadata_server": "prefill_node_ip:2379",
+  "metadata_server": "prefill_node_ip:etcd_port",
   "metadata_backend": "etcd",
   "protocol": "tcp",
   "device_name": ""
@@ -76,7 +76,7 @@ prepare a same `mooncake.json` file for both prefill and decode node.
 #### run serving
 start etcd server
 ```C
-etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://metadata_server_ip:2379
+etcd --listen-client-urls http://0.0.0.0:etcd_port --advertise-client-urls http://metadata_server_ip:etcd_port
 ```
 start the prefill node
 ```C
@@ -171,7 +171,7 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
   "max_tokens": 1000
 }'
 ```
-
+![](./assets/vllm-mooncake-transfer-engine.png)
 ### Disaggregated Serving with Mooncake-store
 #### installation
 install uv
@@ -198,7 +198,7 @@ prepare a `mooncake.json` file for prefill node.
 ```C
 {
     "local_hostname": "prefill_node_ip",
-    "metadata_server": "etcd://prefill_node_ip:2379",
+    "metadata_server": "etcd://prefill_node_ip:etcd_port",
     "protocol": "tcp",
     "device_name": "",
     "master_server_address": "prefill_node_ip:50001"
@@ -208,7 +208,7 @@ prepare a `mooncake.json` file for decode node.
 ```C
 {
     "local_hostname": "decode_node_ip",
-    "metadata_server": "etcd://prefill_node_ip:2379",
+    "metadata_server": "etcd://prefill_node_ip:etcd_port",
     "protocol": "tcp",
     "device_name": "",
     "master_server_address": "prefill_node_ip:50001"
@@ -217,7 +217,7 @@ prepare a `mooncake.json` file for decode node.
 #### start serving
 Start the etcd server
 ```C
-etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://master_server_ip:2379
+etcd --listen-client-urls http://0.0.0.0:etcd_port --advertise-client-urls http://master_server_ip:etcd_port
 ```
 Start the mooncake_master server
 ```C
@@ -257,3 +257,4 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
   "max_tokens": 1000
 }'
 ```
+![](./assets/vllm_mooncakeStore.png)
