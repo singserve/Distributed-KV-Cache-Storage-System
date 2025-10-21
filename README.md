@@ -193,7 +193,7 @@ install mooncake-transfer-engine
 uv pip3 install mooncake-transfer-engine
 ```
 #### configuartion
-using 2 machines for decode and prefill node. set metadata server on prefill machine. set master server on prefill machine.
+using 2 machines for decode and prefill node. set metadata server on prefill machine. set master server on prefill machine.  
 prepare a `mooncake.json` file for prefill node. (tcp)
 ```C
 {
@@ -203,6 +203,7 @@ prepare a `mooncake.json` file for prefill node. (tcp)
     "device_name": "",
     "master_server_address": "master_server_ip:50001"
 }
+```
 `mooncake.json` file for prefill node. (rdma)
 ```C
 {
@@ -212,7 +213,6 @@ prepare a `mooncake.json` file for prefill node. (tcp)
     "device_name": "erdma_0",
     "master_server_address": "master_server_ip(rdma):50001"
 }
-```
 ```
 prepare a `mooncake.json` file for decode node. (tcp)
 ```C
