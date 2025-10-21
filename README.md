@@ -193,25 +193,45 @@ install mooncake-transfer-engine
 uv pip3 install mooncake-transfer-engine
 ```
 #### configuartion
-using 2 machines for decode and prefill node. set proxy metadata server on prefill machine. set master server on prefill machine.
-prepare a `mooncake.json` file for prefill node.
+using 2 machines for decode and prefill node. set metadata server on prefill machine. set master server on prefill machine.
+prepare a `mooncake.json` file for prefill node. (tcp)
 ```C
 {
     "local_hostname": "prefill_node_ip",
     "metadata_server": "etcd://metadata_server_ip:etcd_port",
     "protocol": "tcp",
     "device_name": "",
-    "master_server_address": "prefill_node_ip:50001"
+    "master_server_address": "master_server_ip:50001"
+}
+`mooncake.json` file for prefill node. (rdma)
+```C
+{
+    "local_hostname": "prefill_node_ip(rdma)",
+    "metadata_server": "etcd://metadata_server_ip(rdma):etcd_port",
+    "protocol": "rdma",
+    "device_name": "erdma_0",
+    "master_server_address": "master_server_ip(rdma):50001"
 }
 ```
-prepare a `mooncake.json` file for decode node.
+```
+prepare a `mooncake.json` file for decode node. (tcp)
 ```C
 {
     "local_hostname": "decode_node_ip",
     "metadata_server": "etcd://metadata_server_ip:etcd_port",
     "protocol": "tcp",
     "device_name": "",
-    "master_server_address": "prefill_node_ip:50001"
+    "master_server_address": "master_server_ip:50001"
+}
+```
+`mooncake.json` file for decode node. (rdma)
+```C
+{
+    "local_hostname":"decode_node_ip(rdma)",
+    "metadata_server": "etcd://metadata_server_ip(rdma):4000",
+    "protocol": "rdma",
+    "device_name": "erdma_0",
+    "master_server_address": "master_server_ip(rdma):50001"
 }
 ```
 #### start serving
