@@ -193,7 +193,7 @@ install mooncake-transfer-engine
 uv pip3 install mooncake-transfer-engine
 ```
 #### configuartion
-using 2 machines for decode and prefill node. set metadata server on prefill machine. set master server on prefill machine.  
+using 2 machines for decode and prefill node seperately. set metadata server on prefill machine. set master server on prefill machine.  
 prepare a `mooncake.json` file for prefill node. (tcp)
 ```C
 {
@@ -228,7 +228,7 @@ prepare a `mooncake.json` file for decode node. (tcp)
 ```C
 {
     "local_hostname":"decode_node_ip(rdma)",
-    "metadata_server": "etcd://metadata_server_ip(rdma):4000",
+    "metadata_server": "etcd://metadata_server_ip(rdma):etcd_port",
     "protocol": "rdma",
     "device_name": "erdma_0",
     "master_server_address": "master_server_ip(rdma):50001"
@@ -281,3 +281,116 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
 }'
 ```
 ![](./assets/vllm_mooncakeStore.png)
+### Disaggregated Serving with Mooncake-store and Multiple vllm instances (refer to [vLLM V0 Disaggregated Serving with MooncakeStore](https://kvcache-ai.github.io/Mooncake/getting_started/examples/vllm-integration/vllm-integration-v1.html#vllm-v0-disaggregated-serving-with-mooncakestore))
+#### installation (same as before)
+install uv
+```C
+pip3 install uv
+uv venv --python 3.12 --seed  
+source .venv/bin/activate  
+```
+install vllm
+```C
+uv pip3 install vllm==0.9.2 --torch-backend=auto
+```
+if there is an error like "ValueError: 'aimv2' is already used by a Transformers config, pick another name." 
+```C
+uv pip install "transformers<4.54.0"
+```
+install mooncake-transfer-engine
+```C
+uv pip3 install mooncake-transfer-engine
+```
+#### configuration
+using 2 machines for prefill node and decode node seperately. using 4 GPUs (instances) on each machine. set metadata server, master server and proxy server on prefill machine. using rdma protocol. using one NIC device. The `mooncake.json` files are the same as before.
+`mooncake.json` file for prefill nodes.  
+```C
+{
+    "local_hostname": "prefill_machine_ip(rdma)",
+    "metadata_server": "etcd://metadata_server_ip(rdma):etcd_port",
+    "protocol": "rdma",
+    "device_name": "erdma_0",
+    "master_server_address": "master_server_ip(rdma):50001"
+}
+```
+`mooncake.json` file for decode nodes. (rdma)
+```C
+{
+    "local_hostname":"decode_machine_ip(rdma)",
+    "metadata_server": "etcd://metadata_server_ip(rdma):etcd_port",
+    "protocol": "rdma",
+    "device_name": "erdma_0",
+    "master_server_address": "master_server_ip(rdma):50001"
+}
+```
+#### start serving
+start etcd server (metadata server) for transfer engine. The metadata server must be accessible from all nodes in the cluster, so its listening IP should be set to `0.0.0.0`. It can run on any machine accessible to all Mooncake nodes - it doesn't need to be co-located with the Master service or storage nodes. 
+```C
+etcd --listen-client-urls http://0.0.0.0:etcd_port --advertise-client-urls http://metadata_server_ip:etcd_port
+```
+Start the mooncake_master server, default is 50051
+```C
+mooncake_master --port 50001
+```
+start the prefill node, the port here is used as the vLLM OpenAI API server ports for prefill nodes.
+```C
+CUDA_VISIBLE_DEVICES=0 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8100 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
+
+CUDA_VISIBLE_DEVICES=1 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8101 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
+
+CUDA_VISIBLE_DEVICES=2 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8102 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
+
+CUDA_VISIBLE_DEVICES=3 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8103 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
+```
+start the decode node, the port here is used as the vLLM OpenAI API server ports for decode nodes.
+```C
+CUDA_VISIBLE_DEVICES=0 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8200 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
+
+CUDA_VISIBLE_DEVICES=1 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8201 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
+
+CUDA_VISIBLE_DEVICES=2 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8202 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
+
+CUDA_VISIBLE_DEVICES=3 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8203 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
+```
+start the proxy server. The proxy server communicates with prefill node and decode node to forward requests. The port here should be in line with the port set above. The proxy server is set on the prefill machine and the server port is 8000.
+```C
+python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_machine_ip:8100 --prefill_machine_ip:8101 prefill_machine_ip:8102 prefill_machine_ip:8103 --decode decode_machine_ip:8200 --decode decode_machine_ip:8201 --decode decode_machine_ip:8202 --decode decode_machine_ip:8203 --port 8000
+```
+the architecture is like this:
+
+#### test with request
+the port here should be in line with the port set above. `localhost` should be replaced with proxy server ip.
+```C
+curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json" -d '{
+  "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+  "prompt": "San Francisco is a",
+  "max_tokens": 1000
+}'
+```
+#### screenshot
+<table>
+    <tr>
+        <td ><center><img src="./assets/MooncakeStore_multinode_curl_result.png" > curl test result </center></td>
+        <td ><center><img src="./assets/MooncakeStore_multinode_etcd_server.png" > etcd server </center></td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/MooncakeStore_multinode_master_server.png" > master server </center></td>
+        <td ><center><img src="./assets/MooncakeStore_multinode_proxy_server.png" > proxy server </center> </td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_1.png" > prefill instance1 </center></td>
+        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_2.png" > prefill instance2 </center> </td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_3.png" > prefill instance3 </center></td>
+        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_4.png" > prefill instance4 </center> </td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/MooncakeStore_multinode_decode_1.png" > decode instance1 </center></td>
+        <td ><center><img src="./assets/MooncakeStore_multinode_decode_2.png" > decode instance2 </center> </td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/MooncakeStore_multinode_decode_1.png" > decode instance3 </center></td>
+        <td ><center><img src="./assets/MooncakeStore_multinode_decode_2.png" > decode instance4 </center> </td>
+    </tr>
+</table>
