@@ -357,7 +357,7 @@ start the proxy server. The proxy server communicates with prefill node and deco
 python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_machine_ip:8100 --prefill_machine_ip:8101 prefill_machine_ip:8102 prefill_machine_ip:8103 --decode decode_machine_ip:8200 --decode decode_machine_ip:8201 --decode decode_machine_ip:8202 --decode decode_machine_ip:8203 --port 8000
 ```
 the architecture is like this:
-
+![](./assets/MooncakeStore_multinode_architecture.jpg)
 #### test with request
 the port here should be in line with the port set above. `localhost` should be replaced with proxy server ip.
 ```C
