@@ -354,7 +354,7 @@ CUDA_VISIBLE_DEVICES=3 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python
 ```
 start the proxy server. The proxy server communicates with prefill node and decode node to forward requests. The port here should be in line with the port set above. The proxy server is set on the prefill machine and the server port is 8000.
 ```C
-python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_machine_ip:8100 --prefill_machine_ip:8101 prefill_machine_ip:8102 prefill_machine_ip:8103 --decode decode_machine_ip:8200 --decode decode_machine_ip:8201 --decode decode_machine_ip:8202 --decode decode_machine_ip:8203 --port 8000
+python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_machine_ip:8100 prefill_machine_ip:8101 prefill_machine_ip:8102 prefill_machine_ip:8103 --decode decode_machine_ip:8200 decode_machine_ip:8201  decode_machine_ip:8202  decode_machine_ip:8203 --port 8000
 ```
 the architecture is like this:
 ![](./assets/MooncakeStore_multinode_architecture.jpg)
@@ -394,3 +394,21 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
         <td ><center><img src="./assets/MooncakeStore_multinode_decode_2.png" > decode instance4 </center> </td>
     </tr>
 </table>
+
+## Designate prefill and decode node for requests
+using openai API 'user' field to pass arguments, designate specific prefill or decode nodes to handle request.
+### preparation
+using 2 prefill node and 2 decode node. settings are the same as before.
+edit `proxy_server.py` in Disaggregated Serving with Mooncake-store
+![](./assets/proxy_server_designate_node.png)
+### start serving and test
+procedure of starting serving is the same as before.  
+```C
+curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json" -d '{
+  "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+  "prompt": "San Francisco is a",
+  "max_tokens": 1000,
+  "user":"prefill:prefill_node_ip:port;decode:decode_node_ip:port"
+}'
+```
+![](./assets/designate_node_result.png)
