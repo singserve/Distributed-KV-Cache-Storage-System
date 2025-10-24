@@ -408,7 +408,7 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
   "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
   "prompt": "San Francisco is a",
   "max_tokens": 1000,
-  "user":"prefill:prefill_node_ip:port;decode:decode_node_ip:port"
+  "user":"prefill=prefill_node_ip:port;decode=decode_node_ip:port"
 }'
 ```
 ![](./assets/designate_node_result.png)
