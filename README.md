@@ -535,3 +535,25 @@ the `test.jsonl` contains request below 10 times. the seq no is the same.
 ```
 the result is 90%
 ![](./assets/same_prefix.png)
+### test get() and put()
+use 2 prefill nodes and 2 decode nodes and deploy prefill nodes on different machines. 
+#### request data
+the 2 requests below have designated prefill nodes on 2 different machines
+```C
+{"model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4", "max_tokens": 100, "prompt": "Shared context #0: This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. Question 0: Summarize the context.", "user": "prefill=10.0.13.1:8103;decode=10.0.13.1:8102"}
+{"model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4", "max_tokens": 100, "prompt": "Shared context #0: This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. Question 0: Summarize the context.", "user": "prefill=10.0.14.1:8103;decode=10.0.14.1:8202"}
+```
+#### request script
+use this simple script to send requests.
+```C
+import json
+import requests
+with open("test3.jsonl") as f:
+    for line in f:
+        payload = json.loads(line)
+        response = requests.post("http://127.0.0.1:8000/v1/completions", json=payload)
+        print(payload)
+```
+#### result
+master_node has info: objects already exists.
+![](./assets/prefill_on_diff_machine.png)
