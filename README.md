@@ -395,14 +395,13 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
     </tr>
 </table>
 
-## Designate prefill and decode node for requests
+## Test prefix caching
 using openai API 'user' field to pass arguments, designate specific prefill or decode nodes to handle request.
-### preparation
-using 2 prefill node and 2 decode node. settings are the same as before.
-edit `proxy_server.py` in Disaggregated Serving with Mooncake-store
+### preparation -- Designate prefill and decode node for requests
+using 2 prefill node and 2 decode node. settings are the same as before. edit `proxy_server.py` in Disaggregated Serving with Mooncake-store and the modified file can be seen in this repository as `proxy_server.py`.  
 ![](./assets/proxy_server_designate_node.png)
-### start serving and test
-procedure of starting serving is the same as before.  
+### start serving and test designation
+using 2 prefill nodes and 2 decode nodes. procedure of starting serving is the same as before.  
 ```C
 curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json" -d '{
   "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
@@ -411,4 +410,110 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
   "user":"prefill=prefill_node_ip:port;decode=decode_node_ip:port"
 }'
 ```
+from picture below, only the designated nodes received the request and start working.
 ![](./assets/designate_node_result.png)
+### test prefix caching -- start serving
+using 4 prefill nodes and 4 decode nodes. the settings are the same as before. the procedure to start serving is the same as before. Exept for the `--enable-prefix-caching` when to start vllm instances.  
+```C
+CUDA_VISIBLE_DEVICES=0 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8100 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}' --enable-prefix-caching
+
+CUDA_VISIBLE_DEVICES=1 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8101 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}' --enable-prefix-caching
+
+CUDA_VISIBLE_DEVICES=2 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8102 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}' --enable-prefix-caching
+
+CUDA_VISIBLE_DEVICES=3 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8103 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}' --enable-prefix-caching
+```
+the decode nodes also
+```C
+CUDA_VISIBLE_DEVICES=0 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8200 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}' --enable-prefix-caching
+
+CUDA_VISIBLE_DEVICES=1 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8201 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}' --enable-prefix-caching
+
+CUDA_VISIBLE_DEVICES=2 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8202 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}' --enable-prefix-caching
+
+CUDA_VISIBLE_DEVICES=3 MOONCAKE_CONFIG_PATH=./mooncake.json VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --port 8203 --max-model-len 10000 --gpu-memory-utilization 0.8 --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}' --enable-prefix-caching
+```
+### dataset
+the dataset used to test has the openai API format.
+```C
+{"model": model_name, "max_tokens": interger_number, "prompt": long prompt, "user": "prefill=prefill_node_ip:server_port;decode=decode_node_ip:server_port"}
+```
+one of the real generated request is like:
+```C
+{"model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4", "max_tokens": 100, "prompt": "Shared context #0: This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. Question 0: Summarize the context.", "user": "prefill=10.0.13.1:8101;decode=10.0.14.1:8200"}
+```
+The prompt uses long prefix text to test prefix caching, followed by a question based on the test. using `user` field to designate prefill node and decode node and divert requests.  
+The dataset is generated automatically by the python script according to 3 kinds of given testing strategies: `Random`, `Designate`, `RR`. `Random` strategy picks randomly among the nodes to form the request. 'Designate' uses the given node url to form the request. `RR` perfoms round robin to pick nodes to generate requests.  
+### metrics (refer to [vLLM Metrics](https://docs.vllm.ai/en/stable/design/metrics.html#v0-metrics))
+vllm exposes a set of metrics which can be accessed by post a request to the vllm server.
+```C
+curl http://server_ip:port/metrics
+```
+The gpu and cpu prefix cache hit rate can be seen after the request is handled in each instance.
+### test prefix caching -- result
+using a python script to generate dataset and post requests to the proxy server. the python file can be seen from this repository as `test_prefix_caching.py`.  
+#### Designate strategy
+first, using `Designate` strategy to generate 20 requests and designate only one prefill node.  the first time of the 20 request shows that the GPU prefix cache hit rate is 0. The second time to run the script shows the result.
+```C
+python3 test_prefix_caching.py \
+--model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 \
+--use-requests \
+--proxy http://127.0.0.1:8000 \
+--request-num 20 \
+--strategy Random \
+--prefill 10.0.13.1:8100 \
+--datapath prefix_cache_test.jsonl
+```
+the result shows that the designated prefill node has 50% GPU hit rate while the others have 0. they even don't received requests (picture2.first)
+<table>
+    <tr>
+        <td ><center><img src="./assets/Designate_prefill1.png" > Designate prefill1 result </center></td>
+        <td ><center><img src="./assets/Designate_prefill2-4.png" > Designate_prefill2-4 result </center></td>
+    </tr>
+</table>  
+
+#### RR strategy
+using `RR` strategy to generate 20 requests and designate nodes suing Round Robin. the first time of the 20 request shows that the GPU prefix cache hit rate is 0. The second time to run the script shows the result.  
+```C
+python3 test_prefix_caching.py \
+--model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 \
+--use-requests \
+--proxy http://127.0.0.1:8000 \
+--request-num 20 \
+--strategy RR \
+--datapath prefix_cache_test.jsonl
+```
+the result shows that the RR designated prefill node has 50% GPU hit rate while the others have 0. the decode node rate is different because when the prefill is using `RR`, the decode is using random
+<table>
+    <tr>
+        <td ><center><img src="./assets/RR_prefill1.png" > RR node1 result </center></td>
+        <td ><center><img src="./assets/RR_prefill2.png" > RR node2 result </center></td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/RR_prefill3.png" > RR node1 result </center></td>
+        <td ><center><img src="./assets/RR_prefill4.png" > RR node2 result </center></td>
+    </tr>  
+</table>  
+
+#### Random strategy
+using `Random` strategy to generate 20 requests and designate nodes suing Round Robin. the first time of the 20 request shows that the GPU prefix cache hit rate is 0. The second time to run the script shows the result.  
+```C
+python3 test_prefix_caching.py \
+--model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 \
+--use-requests \
+--proxy http://127.0.0.1:8000 \
+--request-num 20 \
+--strategy Random \
+--datapath prefix_cache_test.jsonl
+```
+the result shows that no matter what kind of node using random strategy, the GPU prefix cache hit rate is far below the 50%, because the first set of 20 reqeust prefix cache is spread randomly, which leads to less prefix cache to use in the second round. let alone the second round still picks nodes randomly.
+<table>
+    <tr>
+        <td ><center><img src="./assets/random_node1.png" > Random node1 result </center></td>
+        <td ><center><img src="./assets/random_node2.png" > Random node2 result </center></td>
+    </tr>
+    <tr>
+        <td ><center><img src="./assets/random_node3.png" > Random node1 result </center></td>
+        <td ><center><img src="./assets/random_node4.png" > Random node2 result </center></td>
+    </tr>  
+</table>  
