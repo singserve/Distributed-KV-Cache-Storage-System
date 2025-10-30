@@ -453,7 +453,7 @@ The gpu and cpu prefix cache hit rate can be seen after the request is handled i
 ### test prefix caching -- result
 using a python script to generate dataset and post requests to the proxy server. the python file can be seen from this repository as `test_prefix_caching.py`.  
 #### Designate strategy
-first, using `Designate` strategy to generate 20 requests and designate only one prefill node.  the first time of the 20 request shows that the GPU prefix cache hit rate is 0. The second time to run the script shows the result.
+first, using `Designate` strategy to generate 20 requests and designate only one prefill node.  the first time of the 20 request shows that the GPU prefix cache hit rate is 0 because each request is added a sequence number and it's different. The second time to run the script which would generate the same dataset including the sequence no. as the first batch, so the second batch shows the result.
 ```C
 python3 test_prefix_caching.py \
 --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 \
@@ -464,7 +464,7 @@ python3 test_prefix_caching.py \
 --prefill 10.0.13.1:8100 \
 --datapath prefix_cache_test.jsonl
 ```
-the result shows that the designated prefill node has 50% GPU hit rate while the others have 0. they even don't received requests (picture2.first)
+the result shows that the designated prefill node has 50% GPU hit rate because they uses the same prefix as the first batch of 20 requests, while the others have 0. they even don't received requests (picture2.first)
 <table>
     <tr>
         <td ><center><img src="./assets/Designate_prefill1.png" > Designate prefill1 result </center></td>
@@ -517,3 +517,21 @@ the result shows that no matter what kind of node using random strategy, the GPU
         <td ><center><img src="./assets/random_node4.png" > Random node2 result </center></td>
     </tr>  
 </table>  
+
+#### test same prefix
+the above stratety test uses requests with a sequence number which makes each different, so the result of first batch is always 0. here test if delete the difference made by this seq no., the change of GPU prefix cache hit rate.  using a simple script to request
+```C
+import json
+import requests
+with open("test.jsonl") as f:
+    for line in f:
+        payload = json.loads(line)
+        response = requests.post("http://127.0.0.1:8000/v1/completions", json=payload)
+        print(payload)
+```
+the `test.jsonl` contains request below 10 times. the seq no is the same.
+```C
+{"model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4", "max_tokens": 100, "prompt": "Shared context #0: This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. Question 0: Summarize the context.", "user": "prefill=10.0.13.1:8103;decode=10.0.14.1:8203"}
+```
+the result is 90%
+![](./assets/same_prefix.png)
