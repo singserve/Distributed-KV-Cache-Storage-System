@@ -554,6 +554,11 @@ with open("test3.jsonl") as f:
         response = requests.post("http://127.0.0.1:8000/v1/completions", json=payload)
         print(payload)
 ```
+#### start serving
+when start master server, need to set flag to control log output in Mooncake components.
+```
+mooncake_master -v=1 --logtostderr=1 -port=50001
+```
 #### result
-master_node has info: objects already exists.
-![](./assets/prefill_on_diff_machine.png)
+master_node has info:
+![](./assets/master_put_get_info.png)
