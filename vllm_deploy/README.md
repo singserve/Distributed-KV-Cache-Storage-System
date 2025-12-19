@@ -39,7 +39,7 @@ vllm bench throughput \
   --dataset-name sonnet \
   --dataset-path vllm/benchmarks/sonnet.txt
 ```
-![](./assets/vllm_offline_benchmark.png)
+![](../assets/vllm_offline_benchmark.png)
 ### Disaggregated Serving with Mooncake-transfer-engine  (refer to [vLLM V0 Disaggregated Serving Demo](https://kvcache-ai.github.io/Mooncake/getting_started/examples/vllm-integration/vllm-integration-v0.2.html))
 #### installation
 install uv
@@ -171,7 +171,7 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
   "max_tokens": 1000
 }'
 ```
-![](./assets/vllm-mooncake-transfer-engine.png)
+![](../assets/vllm-mooncake-transfer-engine.png)
 ### Disaggregated Serving with Mooncake-store (refer to [vLLM V0 Disaggregated Serving with MooncakeStore](https://kvcache-ai.github.io/Mooncake/getting_started/examples/vllm-integration/vllm-integration-v1.html#vllm-v0-disaggregated-serving-with-mooncakestore))
 #### installation
 install uv
@@ -270,7 +270,7 @@ start the proxy server. The proxy server communicates with prefill node and deco
 python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_node_ip:8100 --decode decode_node_ip:8200 --port 8000
 ```
 the architecture is like this:
-![](./assets/architecture.png)
+![](../assets/architecture.png)
 #### test with request
 the port here should be in line with the port set above.
 ```C
@@ -280,7 +280,7 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
   "max_tokens": 1000
 }'
 ```
-![](./assets/vllm_mooncakeStore.png)
+![](../assets/vllm_mooncakeStore.png)
 ### Disaggregated Serving with Mooncake-store and Multiple vllm instances (refer to [vLLM V0 Disaggregated Serving with MooncakeStore](https://kvcache-ai.github.io/Mooncake/getting_started/examples/vllm-integration/vllm-integration-v1.html#vllm-v0-disaggregated-serving-with-mooncakestore))
 #### installation (same as before)
 install uv
@@ -357,7 +357,7 @@ start the proxy server. The proxy server communicates with prefill node and deco
 python3 vllm/examples/online_serving/disagg_examples/disagg_proxy_demo.py --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4 --prefill prefill_machine_ip:8100 prefill_machine_ip:8101 prefill_machine_ip:8102 prefill_machine_ip:8103 --decode decode_machine_ip:8200 decode_machine_ip:8201  decode_machine_ip:8202  decode_machine_ip:8203 --port 8000
 ```
 the architecture is like this:
-![](./assets/MooncakeStore_multinode_architecture.jpg)
+![](../assets/MooncakeStore_multinode_architecture.jpg)
 #### test with request
 the port here should be in line with the port set above. `localhost` should be replaced with proxy server ip.
 ```C
@@ -370,28 +370,28 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
 #### screenshot
 <table>
     <tr>
-        <td ><center><img src="./assets/MooncakeStore_multinode_curl_result.png" > curl test result </center></td>
-        <td ><center><img src="./assets/MooncakeStore_multinode_etcd_server.png" > etcd server </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_curl_result.png" > curl test result </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_etcd_server.png" > etcd server </center></td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/MooncakeStore_multinode_master_server.png" > master server </center></td>
-        <td ><center><img src="./assets/MooncakeStore_multinode_proxy_server.png" > proxy server </center> </td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_master_server.png" > master server </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_proxy_server.png" > proxy server </center> </td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_1.png" > prefill instance1 </center></td>
-        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_2.png" > prefill instance2 </center> </td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_prefill_1.png" > prefill instance1 </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_prefill_2.png" > prefill instance2 </center> </td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_3.png" > prefill instance3 </center></td>
-        <td ><center><img src="./assets/MooncakeStore_multinode_prefill_4.png" > prefill instance4 </center> </td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_prefill_3.png" > prefill instance3 </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_prefill_4.png" > prefill instance4 </center> </td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/MooncakeStore_multinode_decode_1.png" > decode instance1 </center></td>
-        <td ><center><img src="./assets/MooncakeStore_multinode_decode_2.png" > decode instance2 </center> </td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_decode_1.png" > decode instance1 </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_decode_2.png" > decode instance2 </center> </td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/MooncakeStore_multinode_decode_1.png" > decode instance3 </center></td>
-        <td ><center><img src="./assets/MooncakeStore_multinode_decode_2.png" > decode instance4 </center> </td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_decode_1.png" > decode instance3 </center></td>
+        <td ><center><img src="../assets/MooncakeStore_multinode_decode_2.png" > decode instance4 </center> </td>
     </tr>
 </table>
 
@@ -399,7 +399,7 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
 using openai API 'user' field to pass arguments, designate specific prefill or decode nodes to handle request.
 ### preparation -- Designate prefill and decode node for requests
 using 2 prefill node and 2 decode node. settings are the same as before. edit `proxy_server.py` in Disaggregated Serving with Mooncake-store and the modified file can be seen in this repository as `proxy_server.py`.  
-![](./assets/proxy_server_designate_node.png)
+![](../assets/proxy_server_designate_node.png)
 ### start serving and test designation
 using 2 prefill nodes and 2 decode nodes. procedure of starting serving is the same as before.  
 ```C
@@ -411,7 +411,7 @@ curl -s http://localhost:8000/v1/completions -H "Content-Type: application/json"
 }'
 ```
 from picture below, only the designated nodes received the request and start working.
-![](./assets/designate_node_result.png)
+![](../assets/designate_node_result.png)
 ### test prefix caching -- start serving
 using 4 prefill nodes and 4 decode nodes. the settings are the same as before. the procedure to start serving is the same as before. Exept for the `--enable-prefix-caching` when to start vllm instances.  
 ```C
@@ -467,8 +467,8 @@ python3 test_prefix_caching.py \
 the result shows that the designated prefill node has 50% GPU hit rate because they uses the same prefix as the first batch of 20 requests, while the others have 0. they even don't received requests (picture2.first)
 <table>
     <tr>
-        <td ><center><img src="./assets/Designate_prefill1.png" > Designate prefill1 result </center></td>
-        <td ><center><img src="./assets/Designate_prefill2-4.png" > Designate_prefill2-4 result </center></td>
+        <td ><center><img src="../assets/Designate_prefill1.png" > Designate prefill1 result </center></td>
+        <td ><center><img src="../assets/Designate_prefill2-4.png" > Designate_prefill2-4 result </center></td>
     </tr>
 </table>  
 
@@ -486,12 +486,12 @@ python3 test_prefix_caching.py \
 the result shows that the RR designated prefill node has 50% GPU hit rate while the others have 0. the decode node rate is different because when the prefill is using `RR`, the decode is using random
 <table>
     <tr>
-        <td ><center><img src="./assets/RR_prefill1.png" > RR node1 result </center></td>
-        <td ><center><img src="./assets/RR_prefill2.png" > RR node2 result </center></td>
+        <td ><center><img src="../assets/RR_prefill1.png" > RR node1 result </center></td>
+        <td ><center><img src="../assets/RR_prefill2.png" > RR node2 result </center></td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/RR_prefill3.png" > RR node1 result </center></td>
-        <td ><center><img src="./assets/RR_prefill4.png" > RR node2 result </center></td>
+        <td ><center><img src="../assets/RR_prefill3.png" > RR node1 result </center></td>
+        <td ><center><img src="../assets/RR_prefill4.png" > RR node2 result </center></td>
     </tr>  
 </table>  
 
@@ -509,12 +509,12 @@ python3 test_prefix_caching.py \
 the result shows that no matter what kind of node using random strategy, the GPU prefix cache hit rate is far below the 50%, because the first set of 20 reqeust prefix cache is spread randomly, which leads to less prefix cache to use in the second round. let alone the second round still picks nodes randomly.
 <table>
     <tr>
-        <td ><center><img src="./assets/random_node1.png" > Random node1 result </center></td>
-        <td ><center><img src="./assets/random_node2.png" > Random node2 result </center></td>
+        <td ><center><img src="../assets/random_node1.png" > Random node1 result </center></td>
+        <td ><center><img src="../assets/random_node2.png" > Random node2 result </center></td>
     </tr>
     <tr>
-        <td ><center><img src="./assets/random_node3.png" > Random node1 result </center></td>
-        <td ><center><img src="./assets/random_node4.png" > Random node2 result </center></td>
+        <td ><center><img src="../assets/random_node3.png" > Random node1 result </center></td>
+        <td ><center><img src="../assets/random_node4.png" > Random node2 result </center></td>
     </tr>  
 </table>  
 
@@ -534,7 +534,7 @@ the `test.jsonl` contains request below 10 times. the seq no is the same.
 {"model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4", "max_tokens": 100, "prompt": "Shared context #0: This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. This is long context. Question 0: Summarize the context.", "user": "prefill=10.0.13.1:8103;decode=10.0.14.1:8203"}
 ```
 the result is 90%
-![](./assets/same_prefix.png)
+![](../assets/same_prefix.png)
 ### test get() and put()
 use 2 prefill nodes and 2 decode nodes and deploy prefill nodes on different machines. 
 #### request data
@@ -561,4 +561,4 @@ mooncake_master -v=1 --logtostderr=1 -port=50001
 ```
 #### result
 master_node has info:
-![](./assets/master_put_get_info.png)
+![](../assets/master_put_get_info.png)
