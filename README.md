@@ -55,7 +55,7 @@ Although the system can launch the vLLM inference engine, a comprehensive perfor
 4. python3 run `start_ipc_server.py` in `VCache` to start VRAM pool metadata manager  
 5. run mooncake master  
 6. run test scripts  
-### integration with vllm
+### integration with vllm (UNDER REVISION AND TEST)
 1. set up VCache system and vllm, lmcache, mooncake
 2. replace `factory.py` in vllm project with `factory.py` in `vllm_integration` to register kv connector
 3. put kv connector in `vllm_integration` in 'kv_connector' repository in vllm project
