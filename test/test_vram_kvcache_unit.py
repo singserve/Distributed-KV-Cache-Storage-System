@@ -13,7 +13,7 @@ from typing import Union
 from lmcache.utils import CacheEngineKey, LayerCacheEngineKey
 
 @dataclass
-class TestVRAMKVCacheUnit:
+class VRAMKVCacheUnit:
     """
     Test Cache Engine中用于GPU VRAM segment存储的KV cache单元
     增强的数据结构，包含完整的segment信息

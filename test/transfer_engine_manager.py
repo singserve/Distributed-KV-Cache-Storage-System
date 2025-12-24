@@ -1,32 +1,20 @@
-# SPDX-License-Identifier: Apache-2.0
-# Standard
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
-import asyncio
 import threading
 import time
-import ctypes
-import uuid
 import os
-import json
-
-# Third Party
 import torch
-
-# First Party
 from lmcache.logging import init_logger
-from lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)
 
-# Try to import cupy, but make it optional
 try:
     import cupy as cp
     CUPY_AVAILABLE = True
     logger.info("CuPy is available")
 except ImportError:
     CUPY_AVAILABLE = False
-    logger.warning("CuPy not available, intra-GPU transfers using CuPy will be disabled")
+    logger.warning("CuPy not available")
 
 # Mooncake imports
 try:
@@ -38,7 +26,7 @@ except ImportError:
     logger.warning("Mooncake transfer engine not available, cross-GPU transfers disabled")
 
 # Import GPU VRAM segment class
-from lmcache.test.gpu_vram_segment_manager import GPUVRAMSegment
+from lmcache.VCache.gpu_vram_segment_manager import GPUVRAMSegment
 
 class TransferEngineManager:
     """Manages Mooncake transfer engine for cross-GPU data transfers."""
@@ -245,104 +233,7 @@ class TransferEngineManager:
         except Exception as e:
             logger.error(f"Exception checking transfer status: {e}")
             return -1
-
-    def transfer_within_gpu(self, source_address: int, target_address: int, size: int, gpu_id: int) -> bool:
-        """
-        More practical implementation using CuPy as intermediary.
-        """
-        try:
-            # Save current device
-            original_device = torch.cuda.current_device()
-            torch.cuda.set_device(gpu_id)
-            
-            logger.info(f"Starting intra-GPU memory copy on GPU {gpu_id}: {hex(source_address)} -> {hex(target_address)}, size: {size} bytes")
-            
-            if not CUPY_AVAILABLE:
-                logger.warning("CuPy not available, using torch.cuda.memcpy for intra-GPU transfer")
-                # 使用torch.cuda.memcpy进行GPU内拷贝
-                import ctypes
-                from ctypes import c_void_p
-                
-                # 加载CUDA驱动
-                try:
-                    cuda = ctypes.CDLL("nvcuda.dll" if os.name == 'nt' else "libcuda.so")
-                except Exception as e:
-                    logger.error(f"Failed to load CUDA driver: {e}")
-                    return False
-                
-                # 定义cudaMemcpy函数
-                cuda.cudaMemcpy.restype = ctypes.c_int
-                cuda.cudaMemcpy.argtypes = [c_void_p, c_void_p, ctypes.c_size_t, ctypes.c_int]
-                
-                # CUDA内存拷贝类型 - 设备到设备
-                cudaMemcpyDeviceToDevice = 2
-                
-                # 执行设备到设备的内存拷贝
-                result = cuda.cudaMemcpy(
-                    c_void_p(target_address),  # 目标地址
-                    c_void_p(source_address),  # 源地址
-                    size,                      # 大小
-                    cudaMemcpyDeviceToDevice   # 拷贝方向
-                )
-                
-                if result == 0:  # cudaSuccess
-                    logger.info(f"Intra-GPU memory copy successful using torch.cuda.memcpy: {size} bytes from {hex(source_address)} to {hex(target_address)}")
-                else:
-                    logger.error(f"Intra-GPU memory copy failed with CUDA error: {result}")
-                    return False
-            else:
-                # 使用CuPy进行GPU内拷贝
-                with cp.cuda.Device(gpu_id):
-                    # 将源地址包装为CuPy数组
-                    src_mem = cp.cuda.UnownedMemory(source_address, size, None)
-                    src_ptr = cp.cuda.MemoryPointer(src_mem, 0)
-                    
-                    # 将目标地址包装为CuPy数组
-                    dst_mem = cp.cuda.UnownedMemory(target_address, size, None)
-                    dst_ptr = cp.cuda.MemoryPointer(dst_mem, 0)
-                    
-                    # 创建CuPy数组视图
-                    # 假设数据为float32类型
-                    element_size = cp.dtype(cp.int64).itemsize
-                    num_elements = size // element_size
-                    
-                    src_arr = cp.ndarray((num_elements,), dtype=cp.int64, memptr=src_ptr)
-                    dst_arr = cp.ndarray((num_elements,), dtype=cp.int64, memptr=dst_ptr)
-                    
-                    # 方法1: 使用CuPy数组拷贝（推荐）
-                    cp.copyto(dst_arr, src_arr)
-                    
-                    # 同步
-                    cp.cuda.Stream.null.synchronize()
-                
-                logger.info(f"Intra-GPU memory copy successful using CuPy: {size} bytes from {hex(source_address)} to {hex(target_address)}")
-            
-            # Update statistics
-            with self.lock:
-                self.transfer_stats['total_transfers'] += 1
-                self.transfer_stats['successful_transfers'] += 1
-                self.transfer_stats['total_bytes_transferred'] += size
-            
-            # Restore original device
-            torch.cuda.set_device(original_device)
-            return True
-                
-        except Exception as e:
-            logger.error(f"Intra-GPU memory copy failed: {e}")
-            # Update statistics
-            with self.lock:
-                self.transfer_stats['total_transfers'] += 1
-                self.transfer_stats['failed_transfers'] += 1
-            
-            # Restore original device in case of error
-            try:
-                torch.cuda.set_device(original_device)
-            except:
-                pass
-            return False
-
-    
-    
+       
     def get_stats(self) -> dict:
         """Get transfer statistics."""
         with self.lock:

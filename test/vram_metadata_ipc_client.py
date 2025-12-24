@@ -123,10 +123,9 @@ class VRAMMetadataIPCClient:
     def lookup_prefix(
         self,
         token_ids: List[int],
-        max_tokens: Optional[int] = None,
-        current_gpu_id: Optional[int] = None,
         all_chunks: Optional[List[Tuple[int, int, CacheEngineKey]]] = None,
-    ) -> Tuple[int, Optional[CacheEngineKey], Optional[int], bool]:
+        current_gpu_id: Optional[int] = None,
+    ) -> Tuple[int, Optional[List[Tuple[Tuple[int, int], int, bool]]]]:
         """
         Lookup prefix match by delegating to VRAM metadata IPC server.
         """
@@ -144,10 +143,8 @@ class VRAMMetadataIPCClient:
                         serialized_chunks.append((start, end, self._serialize_key(cache_key)))
                 
                 # Make IPC call - use the registered method from the manager
-                # Note: IPC server may not support all_chunks parameter yet
-                # We'll pass it as an optional parameter
                 result = self.server_proxy.lookup_prefix(
-                    token_ids, max_tokens, current_gpu_id, serialized_chunks
+                    token_ids, serialized_chunks, current_gpu_id
                 )
                 
                 # 尝试最可能成功的方法
@@ -156,25 +153,20 @@ class VRAMMetadataIPCClient:
                     result = result._getvalue()
                 
                 # 现在应该可以正常解包了
-                if isinstance(result, (tuple, list)) and len(result) == 4:
-                    hit_tokens, key_dict, gpu_id, needs_transfer = result
-                    logger.info(f"IPC lookup successful: {hit_tokens} hits, GPU {gpu_id}, transfer: {needs_transfer}")
+                if isinstance(result, (tuple, list)) and len(result) == 2:
+                    hit_tokens, chunk_info_list = result
+                    logger.info(f"IPC lookup successful: {hit_tokens} hits, Chunks: {len(chunk_info_list) if chunk_info_list else 0}")
                     
-                    # Deserialize key if present
-                    key = None
-                    if key_dict:
-                        key = self._deserialize_key(key_dict)
-                    
-                    logger.debug(f"IPC lookup result - Hits: {hit_tokens}, Key: {key}, GPU: {gpu_id}, Transfer: {needs_transfer}")
-                    return hit_tokens, key, gpu_id, needs_transfer
+                    logger.debug(f"IPC lookup result - Hits: {hit_tokens}, Chunk info list: {chunk_info_list}")
+                    return hit_tokens, chunk_info_list
                 else:
                     logger.error(f"Unexpected result format: {type(result)}, length: {len(result) if hasattr(result, '__len__') else 'N/A'}")
-                    return 0, None, None, False
+                    return 0, None
                 
             except Exception as e:
                 self.failed_requests += 1
                 logger.error(f"IPC lookup failed: {e}")
-                return 0, None, None, False
+                return 0, None
 
     def register_kvcache(
         self,
@@ -187,7 +179,6 @@ class VRAMMetadataIPCClient:
         buffer_pointer: Optional[int] = None,
         segment_id: Optional[str] = None,
         resident_hostname: Optional[str] = None,
-        kv_cache_structure: Optional[Dict] = None,
     ) -> bool:
         """
         Register KV cache by delegating to VRAM metadata IPC server.
@@ -212,8 +203,7 @@ class VRAMMetadataIPCClient:
                     tensor_size,
                     buffer_pointer,
                     segment_id,
-                    resident_hostname,
-                    kv_cache_structure
+                    resident_hostname
                 )
                 
                 if success:
@@ -231,7 +221,7 @@ class VRAMMetadataIPCClient:
 
     def batch_register_kvcache(
         self,
-        entries_data: List[Tuple[CacheEngineKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str], Optional[Dict]]]
+        entries_data: List[Tuple[CacheEngineKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str]]]
     ) -> List[bool]:
         """
         批量注册KV cache到GPU VRAM pool metadata
@@ -239,7 +229,7 @@ class VRAMMetadataIPCClient:
         Args:
             entries_data: 每个entry的数据元组列表，格式为:
                 (cache_key, token_ids, gpu_id, tensor_shape, tensor_dtype, tensor_size, 
-                 buffer_pointer, segment_id, resident_hostname, kv_cache_structure)
+                 buffer_pointer, segment_id, resident_hostname)
             
         Returns:
             每个entry的注册结果列表，True表示成功，False表示失败
@@ -257,8 +247,7 @@ class VRAMMetadataIPCClient:
                     try:
                         # 解包entry数据
                         (cache_key, token_ids, gpu_id, tensor_shape, tensor_dtype, 
-                         tensor_size, buffer_pointer, segment_id, resident_hostname, 
-                         kv_cache_structure) = entry_data
+                         tensor_size, buffer_pointer, segment_id, resident_hostname) = entry_data
                         
                         # Serialize key and dtype for IPC transmission
                         key_dict = self._serialize_key(cache_key)
@@ -267,8 +256,7 @@ class VRAMMetadataIPCClient:
                         # 添加到批量注册列表
                         batch_entries.append((
                             key_dict, token_ids, gpu_id, tensor_shape, tensor_dtype_str, 
-                            tensor_size, buffer_pointer, segment_id, resident_hostname, 
-                            kv_cache_structure
+                            tensor_size, buffer_pointer, segment_id, resident_hostname
                         ))
                         
                     except Exception as e:
@@ -361,8 +349,7 @@ class VRAMMetadataIPCClient:
                         transfer_in_progress=entry_data.get('transfer_in_progress', False),
                         transfer_target_gpu=entry_data.get('transfer_target_gpu'),
                         prefetch_priority=entry_data.get('prefetch_priority', 0),
-                        segment_id=entry_data.get('segment_id'),
-                        kv_cache_structure=entry_data.get('kv_cache_structure')  # Add KV cache structure
+                        segment_id=entry_data.get('segment_id')
                     )
                     
                     return entry
@@ -435,8 +422,7 @@ class VRAMMetadataIPCClient:
                             transfer_in_progress=entry_data.get('transfer_in_progress', False),
                             transfer_target_gpu=entry_data.get('transfer_target_gpu'),
                             prefetch_priority=entry_data.get('prefetch_priority', 0),
-                            segment_id=entry_data.get('segment_id'),
-                            kv_cache_structure=entry_data.get('kv_cache_structure')
+                            segment_id=entry_data.get('segment_id')
                         )
                         result.append(entry)
                     else:
