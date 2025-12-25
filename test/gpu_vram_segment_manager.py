@@ -1,16 +1,10 @@
-# SPDX-License-Identifier: Apache-2.0
-# Standard
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple, Union
 import threading
 import time
-import uuid
-import os
 from collections import defaultdict
-# Third Party
 import torch
 
-# First Party
 from lmcache.logging import init_logger
 from lmcache.test.test_vram_kvcache_unit import TestVRAMKVCacheUnit
 from lmcache.utils import CacheEngineKey, LayerCacheEngineKey
@@ -436,7 +430,7 @@ class GPUVRAMSegment:
 class GPUVRAMSegmentManager:
     """
     GPU VRAM Segment Manager for managing GPU memory segments.
-    Each cache engine instance has its own segment manager for local GPU VRAM management.
+    Each vcache engine instance has its own segment manager for local GPU VRAM management.
     Handles segment allocation, deallocation, and space management for a specific GPU.
     """
     
@@ -444,18 +438,17 @@ class GPUVRAMSegmentManager:
         self.config = config
         self.gpu_id = gpu_id
         self.transfer_engine_manager = transfer_engine_manager
-        self.vram_metadata_client = vram_metadata_client  # GPU VRAM Pool Manager client for metadata cleanup
+        self.vram_metadata_client = vram_metadata_client 
         self.lock = threading.RLock()
         
         # GPU VRAM segment management for this specific GPU
         self.segments: List[GPUVRAMSegment] = []  # List of segments on this GPU
-        self.segment_entries: Dict[str, Set] = {}  # segment_id -> set of cache keys
         self.segment_size_mb = config.get_extra_config_value("gpu_vram_segment_size_mb", 256)  # Default 256MB per segment
         
         # Store tensor references to prevent garbage collection
         self._segment_tensors: Dict[str, torch.Tensor] = {}
         
-        # VRAM Unit management - 新增功能
+        # VRAM Unit management
         self._vram_units: Dict[Union[str, CacheEngineKey], TestVRAMKVCacheUnit] = {}  # cache_key -> VRAM unit
         self._segment_to_units: Dict[str, List[Union[str, CacheEngineKey]]] = defaultdict(list)  # segment_id -> [cache_key]
         
@@ -490,11 +483,9 @@ class GPUVRAMSegmentManager:
             
             # Allocate GPU memory using PyTorch
             # We'll create a tensor of the required size to get GPU memory
-            # 使用torch.uint8作为基础类型，因为它有1字节对齐，更容易重新解释为其他类型
-            # 计算uint8元素的数量
             num_elements = segment_size_bytes
             
-            # 使用torch.uint8分配内存，这样我们可以轻松地重新解释为任何dtype
+            # use uint8 tensor for 1-byte alignment
             tensor = torch.zeros(num_elements, dtype=torch.uint8, device='cuda')
             
             # Get the actual GPU memory address
@@ -516,7 +507,6 @@ class GPUVRAMSegmentManager:
             
             # Add to segment tracking
             self.segments.append(segment)
-            self.segment_entries[segment_id] = set()
             
             logger.info(f"Allocated GPU VRAM segment on GPU {self.gpu_id}: {self.segment_size_mb}MB, "
                        f"address: {hex(base_address)}, segment_id: {segment_id}")
@@ -747,11 +737,13 @@ class GPUVRAMSegmentManager:
         Returns:
             True if successful, False otherwise
         """
-        if segment_id not in self.segment_entries:
-            logger.error(f"Segment {segment_id} not found for entry registration on GPU {self.gpu_id}")
-            return False
-        
-        self.segment_entries[segment_id].add(entry_key)
+        # 使用_segment_to_units来跟踪entry
+        # 检查entry是否已经存在，避免重复添加
+        if entry_key in self._segment_to_units.get(segment_id, []):
+            logger.debug(f"Entry {entry_key} already registered in segment {segment_id}")
+            return True
+            
+        self._segment_to_units[segment_id].append(entry_key)
         logger.debug(f"Registered entry {entry_key} in segment {segment_id} on GPU {self.gpu_id}")
         return True
 
@@ -766,12 +758,13 @@ class GPUVRAMSegmentManager:
         Returns:
             True if successful, False otherwise
         """
-        if segment_id not in self.segment_entries:
+        # 使用_segment_to_units来跟踪entry
+        if segment_id not in self._segment_to_units:
             logger.warning(f"Segment {segment_id} not found for entry unregistration on GPU {self.gpu_id}")
             return False
         
-        if entry_key in self.segment_entries[segment_id]:
-            self.segment_entries[segment_id].remove(entry_key)
+        if entry_key in self._segment_to_units[segment_id]:
+            self._segment_to_units[segment_id].remove(entry_key)
             logger.debug(f"Unregistered entry {entry_key} from segment {segment_id} on GPU {self.gpu_id}")
             return True
         
@@ -799,7 +792,7 @@ class GPUVRAMSegmentManager:
                     "size_bytes": segment.size,
                     "used_bytes": segment.used_size,
                     "utilization_percent": utilization,
-                    "entry_count": len(self.segment_entries.get(segment.segment_id, set()))
+                    "entry_count": len(self._segment_to_units.get(segment.segment_id, []))
                 }
             
             return stats
@@ -825,17 +818,18 @@ class GPUVRAMSegmentManager:
             for cache_key in units_to_remove:
                 self.remove_vram_unit(cache_key)
             
-            if segment_id not in self.segment_entries:
+            # 使用_segment_to_units来清理entries
+            if segment_id not in self._segment_to_units:
                 logger.warning(f"Segment {segment_id} not found for cleanup on GPU {self.gpu_id}")
                 return False
             
             # Remove all entries associated with this segment
-            entries_to_remove = list(self.segment_entries[segment_id])
+            entries_to_remove = list(self._segment_to_units[segment_id])
             for entry_key in entries_to_remove:
                 self.unregister_entry_from_segment(segment_id, entry_key)
             
             # Clear segment entries
-            self.segment_entries[segment_id].clear()
+            self._segment_to_units[segment_id].clear()
             
             # Find and reset the segment
             for segment in self.segments:
@@ -1130,7 +1124,6 @@ class GPUVRAMSegmentManager:
             self._segment_tensors.clear()
             
             # Clear all segment tracking
-            self.segment_entries.clear()
             self.segments.clear()
             
             logger.info(f"Successfully cleaned up all GPU VRAM segments and VRAM units on GPU {self.gpu_id}")

@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lmcache.test.test_cache_engine_system import TestCacheEngine
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.test.test_config import TestConfig
+from lmcache.test.test_config import VCacheConfig
 
 
 
@@ -114,7 +114,7 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
     
     Args:
         gpu_id: GPU ID (0或1)
-        config: TestConfig配置
+        config: VCacheConfig配置
         metadata: LMCacheEngineMetadata
         tokens: token列表
         slot_mapping_data: slot mapping数据（CPU上的列表）
@@ -210,7 +210,7 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
     
     Args:
         gpu_id: GPU ID (0或1)
-        config: TestConfig配置
+        config: VCacheConfig配置
         metadata: LMCacheEngineMetadata
         tokens: token列表
         slot_mapping_data: slot mapping数据（CPU上的列表）
@@ -333,12 +333,12 @@ def test_cross_gpu_store_retrieve():
         print("\n1. Creating configuration for GPU0...")
         config_path_gpu0 = "./test_system_config_gpu0.yaml"
         try:
-            config_gpu0 = TestConfig.from_file(config_path_gpu0)
+            config_gpu0 = VCacheConfig.from_file(config_path_gpu0)
             config_gpu0.connector_role = "worker"  
             print(f"✓ Successfully loaded config from file: {config_path_gpu0}")
         except Exception as e:
             print(f"⚠ Falling back to default config for GPU0 due to: {e}")
-            config_gpu0 = TestConfig()
+            config_gpu0 = VCacheConfig()
             config_gpu0.enable_gpu_vram_pool = True  # 启用GPU VRAM池以支持跨GPU传输
             config_gpu0.enable_gpu_vram_segments = True
             config_gpu0.gpu_vram_segment_size_mb = 256
@@ -348,12 +348,12 @@ def test_cross_gpu_store_retrieve():
         print("\n2. Creating configuration for GPU1...")
         config_path_gpu1 = "./test_system_config_gpu1.yaml"
         try:
-            config_gpu1 = TestConfig.from_file(config_path_gpu1)
+            config_gpu1 = VCacheConfig.from_file(config_path_gpu1)
             config_gpu1.connector_role = "worker"  
             print(f"✓ Successfully loaded config from file: {config_path_gpu1}")
         except Exception as e:
             print(f"⚠ Falling back to default config for GPU1 due to: {e}")
-            config_gpu1 = TestConfig()
+            config_gpu1 = VCacheConfig()
             config_gpu1.enable_gpu_vram_pool = True  # 启用GPU VRAM池以支持跨GPU传输
             config_gpu1.enable_gpu_vram_segments = True
             config_gpu1.gpu_vram_segment_size_mb = 256

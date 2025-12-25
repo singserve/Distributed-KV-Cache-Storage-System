@@ -12,7 +12,7 @@ import pickle
 import numpy as np
 import torch
 from lmcache.logging import init_logger
-from test_config import TestConfig
+from vcache_config import VCacheConfig
 
 logger = init_logger(__name__)
 
@@ -29,7 +29,7 @@ except ImportError:
 class MooncakeStorageBackend:
     """Mooncake storage backend using mooncake-store distributed store."""
     
-    def __init__(self, gpu_id: int, config: Optional[TestConfig] = None):
+    def __init__(self, gpu_id: int, config: Optional[VCacheConfig] = None):
         self.gpu_id = gpu_id
         self.config = config
         self.stats = {

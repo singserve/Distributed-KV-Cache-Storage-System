@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lmcache.config import LMCacheEngineMetadata
 from lmcache.logging import init_logger
-from test_config import TestConfig
+from vcache_config import VCacheConfig
 from lmcache.test.test_cache_engine_system import TestCacheEngine, MockGPUConnector
 
 logger = init_logger(__name__)
@@ -70,7 +70,7 @@ class TestCacheEngineStoreRetrieveTest:
         
         logger.info(f"TestCacheEngineStoreRetrieveTest initialized (mask_test={run_mask_test})")
     
-    def _create_test_config(self) -> TestConfig:
+    def _create_test_config(self) -> VCacheConfig:
         """Create test configuration from YAML file."""
         # Get the directory of this file
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -79,11 +79,11 @@ class TestCacheEngineStoreRetrieveTest:
         if not os.path.exists(config_file):
             logger.error(f"Config file not found: {config_file}")
             # Fall back to defaults
-            config = TestConfig.from_defaults()
+            config = VCacheConfig.from_defaults()
             logger.warning("Using default configuration instead of YAML file")
         else:
             logger.info(f"Loading configuration from: {config_file}")
-            config = TestConfig.from_file(config_file)
+            config = VCacheConfig.from_file(config_file)
         
         return config
     

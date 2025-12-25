@@ -1,86 +1,69 @@
 """
-Test Cache Engine Token Database
-基于LMCache前缀缓存机制的token处理类
-实现了前缀哈希链机制，支持vLLM兼容的前缀缓存
+Token Database
 """
 
 from typing import List, Optional, Tuple, Union, Iterable, Any
 import torch
 import os
+from lmcache.utils import CacheEngineKey, STR_DTYPE_TO_TORCH_DTYPE
 
-
-class TestTokenDatabase:
+class TokenDatabase:
     """
-    Test Cache Engine的token处理类
-    基于LMCache的ChunkedTokenDatabase实现前缀缓存机制
+    Token Database with Prefix Hash Chain Mechanism
     """
     
     def __init__(self, chunk_size: int = 256, save_unfull_chunk: bool = True):
         """
-        初始化TestTokenDatabase
-        
         Args:
-            chunk_size: token分块大小
-            save_unfull_chunk: 是否保存不完整的chunk
+            chunk_size: token number per chunk
+            save_unfull_chunk: whether to save incomplete chunks
         """
         self.chunk_size = chunk_size
         self.save_unfull_chunk = save_unfull_chunk
         
-        # 使用前缀哈希链机制
+        # use vLLM compatible hash function if available
         self.hash_func = self._get_hash_function()
         
-        # 初始化NONE_HASH（类似LMCache的实现）
+        # initialize NONE_HASH similar to LMCache implementation
         self.NONE_HASH = self._init_none_hash()
         
-        # 检查分布式一致性设置
+        # check distributed consistency
         self._check_distributed_consistency()
     
     def _get_hash_function(self):
         """
-        获取哈希函数，支持vLLM兼容性
+        get hash function
         
         Returns:
-            哈希函数
+            hash funcion
         """
-        # 尝试从vLLM导入哈希函数
         try:
-            # 优先尝试vLLM >= PR#27151的路径
             from vllm.utils.hashing import get_hash_fn_by_name
             return get_hash_fn_by_name("sha256_cbor")
         except ImportError:
             try:
-                # 尝试vLLM < PR#27151的路径
                 from vllm.utils import get_hash_fn_by_name
                 return get_hash_fn_by_name("sha256_cbor")
             except ImportError:
-                # 回退到内置哈希函数
                 self._warn_hash_consistency()
                 return hash
     
     def _init_none_hash(self) -> int:
         """
-        初始化NONE_HASH，类似LMCache的实现
+        Initialize NONE_HASH value
         
         Returns:
-            NONE_HASH值
+            NONE_HASH
         """
-        # 为了测试一致性，总是返回0
-        # 这样可以确保store和retrieve时使用相同的NONE_HASH
         return 0
     
     def _check_distributed_consistency(self):
-        """
-        检查分布式一致性设置
-        """
         if os.getenv("PYTHONHASHSEED") is None:
             print("WARNING: Using builtin hash without PYTHONHASHSEED set. "
                   "For production environments, set PYTHONHASHSEED=0 "
                   "to ensure consistent hashing across processes.")
     
     def _warn_hash_consistency(self):
-        """
-        哈希一致性警告
-        """
         print("WARNING: Using builtin hash function. "
               "For vLLM compatibility, install vLLM and use sha256_cbor hash.")
     
@@ -115,7 +98,6 @@ class TestTokenDatabase:
         else:
             token_list = tokens
         
-        total_len = len(token_list)
         
         # 使用前缀哈希链处理tokens
         prefix_hash = self.NONE_HASH  # 从NONE_HASH开始
@@ -213,9 +195,6 @@ class TestTokenDatabase:
         worker_id = 0  # 固定为0，而不是从kwargs获取
         world_size = kwargs.get('world_size', 1)
         kv_dtype_str = kwargs.get('kv_dtype', 'float16')
-        
-        # 导入CacheEngineKey
-        from lmcache.utils import CacheEngineKey, STR_DTYPE_TO_TORCH_DTYPE
         
         # 转换dtype字符串为torch.dtype
         kv_dtype = STR_DTYPE_TO_TORCH_DTYPE.get(kv_dtype_str, torch.float16)

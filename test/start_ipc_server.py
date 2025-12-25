@@ -13,16 +13,16 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import from the same directory
-from test_config import TestConfig
+from vcache_config import VCacheConfig
 
 """
 Simple script to start the VRAM metadata IPC server only.
 """
-def create_config() -> TestConfig:
+def create_config() -> VCacheConfig:
     """Create configuration for a specific GPU"""
     config_file = f"test_system_config_gpu0.yaml"
     print(f"Loading configuration from {config_file}")
-    return TestConfig.from_file(config_file)
+    return VCacheConfig.from_file(config_file)
 
 def start_vram_metadata_ipc_server():
     """Start VRAM metadata IPC server"""

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lmcache.test.test_cache_engine_system import TestCacheEngine
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.test.test_config import TestConfig
+from lmcache.test.test_config import VCacheConfig
 
 def generate_kv_cache_paged_list_tensors(
     num_blocks, device, block_size=16, dtype=torch.float16, use_mla=False
@@ -102,11 +102,11 @@ def test_with_simulated_kv_cache():
         print("\n1. config...")
         config_path = "./test_system_config_gpu0.yaml"
         try:
-            config = TestConfig.from_file(config_path)
+            config = VCacheConfig.from_file(config_path)
             print(f"✓ successfully build config from file: {config_path}")
         except Exception as e:
             print(f"fallback to default config due to: {e}")
-            config = TestConfig()
+            config = VCacheConfig()
             config.enable_gpu_vram_pool = False
             config.enable_gpu_vram_segments = True
             config.gpu_vram_segment_size_mb = 256

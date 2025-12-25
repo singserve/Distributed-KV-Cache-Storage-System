@@ -46,8 +46,8 @@ class VRAMMetadataIPCServer:
         
         # Use provided config or create default config
         if config is None:
-            from test_config import TestConfig
-            self.config = TestConfig.from_defaults()
+            from vcache_config import VCacheConfig
+            self.config = VCacheConfig.from_defaults()
         else:
             self.config = config
         

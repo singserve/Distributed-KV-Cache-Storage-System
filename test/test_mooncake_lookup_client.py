@@ -15,7 +15,7 @@ import torch
 # First Party
 from lmcache.logging import init_logger
 from lmcache.utils import CacheEngineKey
-from lmcache.test.test_token_database import TestTokenDatabase
+from lmcache.test.test_token_database import TokenDatabase
 
 logger = init_logger(__name__)
 
@@ -45,8 +45,8 @@ class TestMooncakeLookupClient:
         )
         
         # Initialize test token database for processing tokens
-        # Use TestTokenDatabase instead of ChunkedTokenDatabase
-        from lmcache.test.test_token_database import TestTokenDatabase
+        # Use TokenDatabase instead of ChunkedTokenDatabase
+        from lmcache.test.test_token_database import TokenDatabase
         
         # Create test metadata for token database
         model_config = vllm_config.model_config
@@ -57,7 +57,7 @@ class TestMooncakeLookupClient:
         if hasattr(vllm_config.cache_config, 'cache_dtype'):
             kv_dtype = vllm_config.cache_config.cache_dtype
         
-        # Convert torch dtype to string format expected by TestTokenDatabase
+        # Convert torch dtype to string format expected by TokenDatabase
         kv_dtype_str = "float16"  # Default
         if kv_dtype == torch.float16:
             kv_dtype_str = "float16"
@@ -76,8 +76,8 @@ class TestMooncakeLookupClient:
         
         kv_shape = (num_layer, 2, chunk_size, num_kv_head, head_size)
         
-        # Initialize TestTokenDatabase with appropriate parameters
-        self.token_database = TestTokenDatabase(chunk_size=chunk_size, save_unfull_chunk=True)
+        # Initialize TokenDatabase with appropriate parameters
+        self.token_database = TokenDatabase(chunk_size=chunk_size, save_unfull_chunk=True)
         
         # Store metadata for cache key generation
         self.metadata = {
@@ -111,7 +111,7 @@ class TestMooncakeLookupClient:
         else:
             token_list = token_ids
         
-        # Process token_ids to get all chunks using TestTokenDatabase
+        # Process token_ids to get all chunks using TokenDatabase
         # IMPORTANT: Use the same parameters as TestCacheEngine.lookup() to ensure consistent cache key generation
         # TestCacheEngine.lookup() calls process_tokens with mask=None and model_name="test_model"
         all_chunks = []

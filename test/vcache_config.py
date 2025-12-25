@@ -1,8 +1,5 @@
-#!/usr/bin/env python3
 """
-Test Configuration for GPU VRAM Pool with Cross-GPU Transfer System
-
-This module provides a TestConfig class with direct attributes for all configuration.
+This module provides a VCacheConfig class with direct attributes for all configuration.
 """
 
 from dataclasses import dataclass
@@ -11,12 +8,12 @@ import yaml
 
 
 @dataclass
-class TestConfig:
+class VCacheConfig:
     """
-    Test Configuration for GPU VRAM Pool with Cross-GPU Transfer System
+    VCache Configuration for GPU VRAM Pool with Cross-GPU Transfer System
     
     Direct attributes for all configuration parameters used by:
-    - TestCacheEngine
+    - VCacheEngine
     - GPUVRAMPoolManager  
     - MooncakeStorageBackend
     """
@@ -50,21 +47,21 @@ class TestConfig:
     master_server_address: str = "127.0.0.1:50051"
 
     vram_metadata_ipc_address: str = "192.168.1.86"
-    vram_metadata_ipc_port:int = 5557
+    vram_metadata_ipc_port:int = 9091
     
     
     @staticmethod
-    def from_defaults() -> "TestConfig":
-        """Create TestConfig with default values."""
-        return TestConfig()
+    def from_defaults() -> "VCacheConfig":
+        """Create VCacheConfig with default values."""
+        return VCacheConfig()
     
     @staticmethod
-    def from_file(file_path: str) -> "TestConfig":
-        """Load TestConfig from YAML file."""
+    def from_file(file_path: str) -> "VCacheConfig":
+        """Load VCacheConfig from YAML file."""
         with open(file_path, 'r') as f:
             config_data = yaml.safe_load(f)
         
-        config = TestConfig()
+        config = VCacheConfig()
         
         # Update attributes from YAML data
         for key, value in config_data.items():

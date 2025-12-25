@@ -19,7 +19,7 @@ from lmcache.config import LMCacheEngineMetadata
 from lmcache.logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.utils import CacheEngineKey, cdiv
-from lmcache.test.test_config import TestConfig
+from lmcache.test.test_config import VCacheConfig
 from lmcache.test.test_cache_engine_system import TestCacheEngine, MockGPUConnector
 from lmcache.test.blocked_kv_paged_connector import BlockedKVPagedMemConnector
 from lmcache.test.test_mooncake_lookup_client import TestMooncakeLookupClient
@@ -415,7 +415,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         
         logger.info(f"TestCacheEngineConnector initialized for role {role}")
     
-    def _create_test_config(self, vllm_config: "VllmConfig") -> TestConfig:
+    def _create_test_config(self, vllm_config: "VllmConfig") -> VCacheConfig:
         """Create TestCacheEngine configuration from vLLM config."""
         # Extract configuration from vLLM extra config
         kv_connector_extra_config = (
@@ -427,11 +427,11 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         
         if config_file_path and os.path.exists(config_file_path):
             # Load configuration from YAML file
-            config = TestConfig.from_file(config_file_path)
+            config = VCacheConfig.from_file(config_file_path)
             logger.info(f"Loaded TestCacheEngine configuration from: {config_file_path}")
         else:
             # Use default configuration
-            config = TestConfig.from_defaults()
+            config = VCacheConfig.from_defaults()
             logger.info("Using default TestCacheEngine configuration")
         
         # Set connector_role based on vLLM role

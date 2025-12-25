@@ -167,7 +167,8 @@ class VCacheEngine:
             "gpu_vram_misses": 0,
             "cross_gpu_transfers": 0
         } 
-        logger.info(f"TestCacheEngine initialized for GPU {self.metadata.worker_id} with connector_role={connector_role}")
+        logger.info(f"TestCacheEngine initialized for GPU {self.metadata.worker_id}"
+                    f"with connector_role={connector_role}")
 
 
     def _perform_cross_gpu_transfer(self, entry, source_gpu: int, target_gpu: int, target_buffer: Optional[int] = None) -> bool:
@@ -188,7 +189,9 @@ class VCacheEngine:
             return False
         
 
-        logger.info(f"Starting cross-GPU transfer: GPU {source_gpu} -> GPU {target_gpu}, size: {entry.tensor_size} bytes")
+        logger.info(f"Starting cross-GPU transfer:" 
+                    f"GPU {source_gpu} -> GPU {target_gpu},"
+                    f"size: {entry.tensor_size} bytes")
         
         # Get the actual tensor data from source GPU using entry's buffer_pointer
         source_buffer = entry.buffer_pointer
@@ -202,12 +205,16 @@ class VCacheEngine:
             if self.segment_manager is not None:
                 segment_id, offset = self.segment_manager.allocate_in_segment(entry.tensor_size)
                 if not segment_id or not offset:
-                    logger.error(f"Failed to allocate segment space on GPU {target_gpu} for {entry.tensor_size} bytes")
+                    logger.error(f"Failed to allocate segment space "
+                                 f"on GPU {target_gpu} "
+                                 f"for {entry.tensor_size} bytes")
                     return False
                 
                 # Calculate buffer pointer (base address + offset)
                 target_buffer = self.segment_manager.get_buffer_address(segment_id, offset)
-                logger.info(f"Allocated target buffer: {entry.tensor_size} bytes at address {hex(target_buffer)} in segment {segment_id}")
+                logger.info(f"Allocated target buffer: {entry.tensor_size} bytes "
+                            f"at address {hex(target_buffer)}"
+                            f"in segment {segment_id}")
             else:
                 logger.error("Segment manager not available for buffer allocation")
                 return False
@@ -230,10 +237,13 @@ class VCacheEngine:
         )
                 
         if success:
-            logger.info(f"Cross-GPU transfer completed: GPU {source_gpu} -> GPU {target_gpu}, size: {entry.tensor_size} bytes")
+            logger.info(f"Cross-GPU transfer completed: "
+                        f"GPU {source_gpu} -> GPU {target_gpu}, "
+                        f"size: {entry.tensor_size} bytes")
             # Note: Registration of transferred entry is now handled by the caller
         else:
-            logger.error(f"Cross-GPU transfer failed: GPU {source_gpu} -> GPU {target_gpu}")
+            logger.error(f"Cross-GPU transfer failed: "
+                         f"GPU {source_gpu} -> GPU {target_gpu}")
         
         return success
         
@@ -249,7 +259,9 @@ class VCacheEngine:
             target_buffer: Target buffer address where data was transferred
         """
     
-        logger.info(f"Registering transferred entry in GPU VRAM pool: GPU {target_gpu}, address: {hex(target_buffer)}")
+        logger.info(f"Registering transferred entry in GPU VRAM pool: "
+                    f"GPU {target_gpu}, "
+                    f"address: {hex(target_buffer)}")
         
         # Use the same token IDs, shape, and dtype as the original entry
         # Need to get the cache_key from the original entry
@@ -270,7 +282,10 @@ class VCacheEngine:
         )
         
         if success:
-            logger.info(f"Successfully registered transferred entry in GPU VRAM pool: {len(original_entry.token_ids)} tokens on GPU {target_gpu} at address {hex(target_buffer)}")
+            logger.info(f"Successfully registered transferred entry in GPU VRAM pool:"
+                        f"{len(original_entry.token_ids)} tokens "
+                        f"on GPU {target_gpu} "
+                        f"at address {hex(target_buffer)}")
         else:
             logger.error(f"Failed to register transferred entry in GPU VRAM pool")
         return success
@@ -334,8 +349,10 @@ class VCacheEngine:
         slot_mapping = kwargs.get("slot_mapping")
         assert slot_mapping is not None, "slot_mapping is required for retrieve operation"
         
-        logger.info(f"Retrieve operation: {len(tokens)} tokens, mask={mask is not None}, "
-                   f"kvcaches={len(kvcaches)}, slot_mapping={slot_mapping is not None}")
+        logger.info(f"Retrieve operation: {len(tokens)} tokens,"
+                    f"mask={mask is not None}, "
+                    f"kvcaches={len(kvcaches)},"
+                    f"slot_mapping={slot_mapping is not None}")
         
         # Step 1: Process tokens to generate all_chunks
         
@@ -370,7 +387,9 @@ class VCacheEngine:
             # Batch get entries for all cache keys
             entries = self.vram_metadata_client.batch_get_entry(cache_keys)
             
-            logger.info(f"batch_get_entry - Got {len(entries)} entries, {len([e for e in entries if e])} non-None entries")
+            logger.info(f"batch_get_entry - "
+                        f"Got {len(entries)} entries, "
+                        f"{len([e for e in entries if e])} non-None entries")
             
             # Process results
             for idx, (start, end, cache_key) in enumerate(chunks_needing_retrieval):
@@ -385,11 +404,18 @@ class VCacheEngine:
                         needs_transfer = True
                     
                     gpu_vram_hits.append((start, end, cache_key, entry.gpu_id, needs_transfer, entry))
-                    logger.debug(f"GPU VRAM hit for chunk [{start}, {end}), key: {cache_key}, chunk_hash: {cache_key.chunk_hash if hasattr(cache_key, 'chunk_hash') else 'N/A'}, gpu_id: {entry.gpu_id}, needs_transfer: {needs_transfer}")
+                    logger.debug(f"GPU VRAM hit for chunk [{start}, {end}), "
+                                 f"key: {cache_key}, "
+                                 f"chunk_hash: {cache_key.chunk_hash if hasattr(cache_key, 'chunk_hash') else 'N/A'},"
+                                 f"gpu_id: {entry.gpu_id}, "
+                                 f"needs_transfer: {needs_transfer}")
                 else:
-                    logger.debug(f"No GPU VRAM hit for chunk [{start}, {end}), key: {cache_key}, chunk_hash: {cache_key.chunk_hash if hasattr(cache_key, 'chunk_hash') else 'N/A'}")
+                    logger.debug(f"No GPU VRAM hit for chunk [{start}, {end}), "
+                                 f"key: {cache_key}," 
+                                 f"chunk_hash: {cache_key.chunk_hash if hasattr(cache_key, 'chunk_hash') else 'N/A'}")
         
-        logger.info(f"Found {len(gpu_vram_hits)} GPU VRAM hits out of {len(chunks_needing_retrieval)} chunks needing retrieval")
+        logger.info(f"Found {len(gpu_vram_hits)} GPU VRAM hits "
+                    f"out of {len(chunks_needing_retrieval)} chunks needing retrieval")
         
         # Step 4: Process GPU VRAM hits - only process continuous hits from the beginning
         if gpu_vram_hits:
@@ -411,7 +437,8 @@ class VCacheEngine:
             if not continuous_hits:
                 logger.debug("No continuous GPU VRAM hits from the beginning")
             else:
-                logger.debug(f"Found {len(continuous_hits)} continuous GPU VRAM hits from the beginning, covering tokens [0, {expected_start})")
+                logger.debug(f"Found {len(continuous_hits)} continuous GPU VRAM hits from the beginning,"
+                             f"covering tokens [0, {expected_start})")
                 
                 # Separate local and remote hits
                 local_hits = [(start, end, cache_key, entry) 
@@ -421,7 +448,8 @@ class VCacheEngine:
                               for start, end, cache_key, gpu_id, needs_transfer, entry in continuous_hits 
                               if needs_transfer]
                 
-                logger.info(f"Processing {len(local_hits)} local GPU VRAM hits and {len(remote_hits)} remote GPU VRAM hits")
+                logger.info(f"Processing {len(local_hits)} local GPU VRAM hits "
+                            f"and {len(remote_hits)} remote GPU VRAM hits")
                 
                 # Process local hits (no transfer needed)
                 local_success = False
@@ -531,7 +559,9 @@ class VCacheEngine:
         
         for start, end, cache_key in all_chunks:
             chunk_tokens = tokens[start:end]
-            logger.debug(f"Retrieving hit chunk/prefix [{start}, {end}): {len(chunk_tokens)} tokens with unified cache key {cache_key}")
+            logger.debug(f"Retrieving hit chunk/prefix [{start}, {end}): "
+                         f"{len(chunk_tokens)} tokens "
+                         f"with unified cache key {cache_key}")
             
             retrieved_tokens, kv_cache_tensor = self.storage_backend.retrieve(
                 cache_key=cache_key, 
@@ -539,14 +569,19 @@ class VCacheEngine:
             )
             
             if len(retrieved_tokens) == 0 or kv_cache_tensor is None:
-                logger.error(f"Mooncake retrieve failed for chunk [{start}, {end}): no data found with unified cache key")
+                logger.error(f"Mooncake retrieve failed for chunk [{start}, {end}):"
+                             f" no data found with unified cache key")
                 return False
             
-            logger.info(f"Mooncake retrieve successful for chunk [{start}, {end}): {len(retrieved_tokens)} tokens retrieved, KV cache tensor shape: {kv_cache_tensor.shape}")
+            logger.info(f"Mooncake retrieve successful for chunk [{start}, {end}): "
+                        f"{len(retrieved_tokens)} tokens retrieved, "
+                        f"KV cache tensor shape: {kv_cache_tensor.shape}")
             
             # Verify that retrieved tokens match the chunk tokens
             if retrieved_tokens != chunk_tokens:
-                logger.error(f"Token mismatch for chunk [{start}, {end}): retrieved {len(retrieved_tokens)} tokens but expected {len(chunk_tokens)}")
+                logger.error(f"Token mismatch for chunk [{start}, {end}): "
+                             f"retrieved {len(retrieved_tokens)} tokens "
+                             f"but expected {len(chunk_tokens)}")
                 return False
             
             all_retrieved_data.append((start, end, retrieved_tokens, kv_cache_tensor))
@@ -557,7 +592,8 @@ class VCacheEngine:
             logger.error("Mooncake retrieve failed: no chunks retrieved successfully")
             return False
         
-        logger.info(f"Mooncake retrieve successful: {total_retrieved_tokens} tokens retrieved from {len(all_retrieved_data)} chunks")
+        logger.info(f"Mooncake retrieve successful: {total_retrieved_tokens} tokens retrieved "
+                    f"from {len(all_retrieved_data)} chunks")
         
         # Step 3: Check if we have GPUConnector
         if self.gpu_connector is None:
@@ -572,7 +608,8 @@ class VCacheEngine:
         
         for start, end, retrieved_tokens, kv_cache_tensor in all_retrieved_data:
             num_tokens = end - start
-            logger.debug(f"Preparing Mooncake chunk [{start}, {end}): {num_tokens} tokens for upload")
+            logger.debug(f"Preparing Mooncake chunk [{start}, {end}): "
+                         f"{num_tokens} tokens for upload")
             
             # The kv_cache_tensor is already in the correct format from Mooncake storage
             # Shape: [num_layers, chunk_blocks, 2, block_size, num_kv_heads, head_size]
@@ -629,7 +666,8 @@ class VCacheEngine:
                 total_copied_tokens += num_tokens
                 logger.debug(f"Marked {num_tokens} tokens for Mooncake chunk [{start}, {end}) as retrieved")
             
-            logger.info(f"Processed {len(all_retrieved_data)} Mooncake hits via batch upload, copied {total_copied_tokens} tokens")
+            logger.info(f"Processed {len(all_retrieved_data)} Mooncake hits via batch upload, "
+                        f"copied {total_copied_tokens} tokens")
             return total_copied_tokens > 0
             
         except Exception as e:
@@ -739,7 +777,8 @@ class VCacheEngine:
                     ret_mask[i] = True
                 total_copied_tokens += num_tokens
             
-            logger.info(f"Processed {len(local_hits)} local GPU VRAM hits via batch upload, copied {total_copied_tokens} tokens")
+            logger.info(f"Processed {len(local_hits)} local GPU VRAM hits via batch upload, "
+                        f"copied {total_copied_tokens} tokens")
             return total_copied_tokens > 0
             
         except Exception as e:
@@ -780,7 +819,9 @@ class VCacheEngine:
         
         for start, end, cache_key, source_gpu_id, entry in remote_hits:
             num_tokens = end - start
-            logger.debug(f"Processing remote hit chunk [{start}, {end}): {num_tokens} tokens from GPU {source_gpu_id}")
+            logger.debug(f"Processing remote hit chunk [{start}, {end}): "
+                         f"{num_tokens} tokens "
+                         f"from GPU {source_gpu_id}")
             
             segment_address = None
             
@@ -795,7 +836,8 @@ class VCacheEngine:
                 return False
 
             segment_address = self.segment_manager.get_buffer_address(segment_id, segment_offset)
-            logger.debug(f"Allocated segment space: {entry.tensor_size} bytes at address {hex(segment_address)} for remote GPU VRAM hit data")
+            logger.debug(f"Allocated segment space: {entry.tensor_size} bytes "
+                         f"at address {hex(segment_address)} for remote GPU VRAM hit data")
         
             if segment_address is None:
                 logger.error(f"Failed to allocate segment space for chunk [{start}, {end})")
@@ -810,12 +852,14 @@ class VCacheEngine:
             )
             
             if not transfer_success:
-                logger.error(f"Failed to transfer chunk [{start}, {end}) from GPU {source_gpu_id}")
+                logger.error(f"Failed to transfer chunk [{start}, {end}) "
+                             f"from GPU {source_gpu_id}")
                 # Free allocated segment space
                 self.segment_manager.free_segment_space(segment_id, segment_offset, entry.tensor_size)
                 return False
             
-            logger.info(f"Successfully transferred {num_tokens} tokens from GPU {source_gpu_id} to segment space")
+            logger.info(f"Successfully transferred {num_tokens} tokens "
+                        f"from GPU {source_gpu_id} to segment space")
             
             # Register transferred entry in GPU VRAM pool
             register_success = self._register_transferred_entry(entry, self.metadata.worker_id, segment_address)
@@ -865,7 +909,8 @@ class VCacheEngine:
                 return False
             
             restored_tensor = vram_tensor.view(original_shape)
-            logger.debug(f"Restored tensor for chunk [{start}, {end}): shape={restored_tensor.shape}")
+            logger.debug(f"Restored tensor for chunk [{start}, {end}): "
+                         f"shape={restored_tensor.shape}")
             
             # Create slot mapping for this chunk
             if slot_mapping is not None:
@@ -916,7 +961,8 @@ class VCacheEngine:
                 total_copied_tokens += num_tokens
                 logger.info(f"Marked {num_tokens} tokens for chunk [{start}, {end}) as retrieved")
             
-            logger.info(f"Processed {len(remote_hits)} remote GPU VRAM hits via batch upload, copied {total_copied_tokens} tokens")
+            logger.info(f"Processed {len(remote_hits)} remote GPU VRAM hits via batch upload, "
+                        f"copied {total_copied_tokens} tokens")
             return total_copied_tokens > 0
             
         except Exception as e:
@@ -987,7 +1033,9 @@ class VCacheEngine:
         # for each chunk
         for start, end, cache_key in all_chunks:
             chunk_tokens = tokens[start:end]
-            logger.debug(f"Processing chunk/prefix [{start}, {end}): {len(chunk_tokens)} tokens, key: {cache_key}")
+            logger.debug(f"Processing chunk/prefix [{start}, {end}): "
+                         f"{len(chunk_tokens)} tokens, "
+                         f"key: {cache_key}")
             
             # check if already exists in GPU VRAM
             gpu_vram_exists = False
@@ -1019,8 +1067,10 @@ class VCacheEngine:
             # Dimension 4: head_size (size of each head)
             
             if len(first_kv_cache.shape) != 5:
-                logger.error(f"Unsupported KV cache shape: {first_kv_cache.shape}. Only vLLM FlashAttention KV Cache structure (5D) is supported.")
-                raise ValueError(f"Unsupported KV cache shape: {first_kv_cache.shape}. Expected 5D vLLM FlashAttention KV Cache structure.")
+                logger.error(f"Unsupported KV cache shape: {first_kv_cache.shape}. "
+                             f"Only vLLM FlashAttention KV Cache structure (5D) is supported.")
+                raise ValueError(f"Unsupported KV cache shape: {first_kv_cache.shape}. "
+                                 f"Expected 5D vLLM FlashAttention KV Cache structure.")
             
             # Size per token: 2 * num_kv_heads * head_size * element_size
             num_kv_heads = first_kv_cache.shape[3]
@@ -1055,7 +1105,8 @@ class VCacheEngine:
             segment_id, segment_offset = self.segment_manager.allocate_in_segment(chunk_kv_cache_size)
 
             if segment_id is None or segment_offset is None:
-                logger.error(f"Failed to allocate segment space for chunk [{start}, {end}) of size {chunk_kv_cache_size} bytes")
+                logger.error(f"Failed to allocate segment space for chunk [{start}, {end}) "
+                             f"of size {chunk_kv_cache_size} bytes")
                 continue
             
             # Use new create_vram_unit method to create VRAM Unit (for 1D flattened data)
@@ -1082,7 +1133,8 @@ class VCacheEngine:
             # Step 3: Copy vLLM KV cache data to VRAM segment
             allocated_buffer_address = self.segment_manager.get_buffer_address(segment_id, segment_offset)
             if allocated_buffer_address is None:
-                logger.error(f"Failed to get buffer address for segment {segment_id}, offset {segment_offset}")
+                logger.error(f"Failed to get buffer address for segment {segment_id}, "
+                             f"offset {segment_offset}")
                 self.segment_manager.free_segment_space(segment_id, segment_offset, chunk_kv_cache_size)
                 continue
             
@@ -1135,7 +1187,8 @@ class VCacheEngine:
             vram_flat_tensor = vram_kvcache_unit.kv_cache_tensor
             
             if vram_flat_tensor.numel() < flattened_tensor.numel():
-                logger.error(f"VRAM unit tensor size insufficient: {vram_flat_tensor.numel()} < {flattened_tensor.numel()}")
+                logger.error(f"VRAM unit tensor size insufficient: "
+                             f"{vram_flat_tensor.numel()} < {flattened_tensor.numel()}")
                 self.segment_manager.free_segment_space(segment_id, segment_offset, chunk_kv_cache_size)
                 continue
             else:
@@ -1173,7 +1226,9 @@ class VCacheEngine:
             )
             
             if store_success:
-                logger.debug(f"Successfully stored KV cache for chunk [{start}, {end}): {len(chunk_tokens)} tokens with unified cache key, {actual_num_layers} layers")
+                logger.debug(f"Successfully stored KV cache for chunk [{start}, {end}): "
+                             f"{len(chunk_tokens)} tokens with unified cache key,"
+                            f"{actual_num_layers} layers")
             else:
                 logger.error(f"Failed to store KV cache for chunk [{start}, {end})")
             
@@ -1233,7 +1288,11 @@ class VCacheEngine:
             logger.warning(f"Unexpected KV cache shape for registration: {kv_shape}")
             return
         
-        logger.debug(f"Extracted chunk KV cache parameters: num_layers={num_layers}, block_size={block_size}, num_heads={num_heads}, head_size={head_size}")
+        logger.debug(f"Extracted chunk KV cache parameters: "
+                     f"num_layers={num_layers}, "
+                     f"block_size={block_size}, "
+                     f"num_heads={num_heads}, "
+                     f"head_size={head_size}")
         
         if gpu_vram_address is None:
             logger.warning("No GPU VRAM address provided for KV cache registration")
@@ -1299,7 +1358,9 @@ class VCacheEngine:
             kv_dtype=kv_dtype_str
         ):
             all_chunks.append((start, end, cache_key))
-            logger.debug(f"Generated chunk [{start}, {end}): {end-start} tokens, key: {cache_key}")
+            logger.debug(f"Generated chunk [{start}, {end}): "
+                         f"{end-start} tokens, "
+                         f"key: {cache_key}")
         
         # Directly pass all_chunks to vram_metadata_client.lookup_prefix, 
         # let vram manager find the most suitable chunk based on all chunks

@@ -15,15 +15,15 @@ from typing import List
 sys.path.insert(0, 'LMCache')
 
 from lmcache.config import LMCacheEngineMetadata
-from test_config import TestConfig
+from vcache_config import VCacheConfig
 from lmcache.v1.test_cache_engine_system import TestCacheEngine, MockGPUConnector
 
 
-def create_engine_config(gpu_id: int) -> TestConfig:
+def create_engine_config(gpu_id: int) -> VCacheConfig:
     """Create configuration for a specific GPU"""
     config_file = f"test_system_config_gpu{gpu_id}.yaml"
     print(f"Loading configuration for GPU {gpu_id} from {config_file}")
-    return TestConfig.from_file(config_file)
+    return VCacheConfig.from_file(config_file)
 
 
 def create_engine_metadata(gpu_id: int) -> LMCacheEngineMetadata:
