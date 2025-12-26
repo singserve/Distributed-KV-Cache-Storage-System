@@ -1,35 +1,32 @@
-# SPDX-License-Identifier: Apache-2.0
 """
-Test Mooncake Lookup Client for scheduler role.
+Mooncake Lookup Client for scheduler role.
 
 This client provides lookup functionality compatible with MooncakeStorageBackend's lookup method,
 allowing the scheduler to query Mooncake for cache hits without instantiating the full storage backend.
 """
 
-# Standard
-from typing import Union, Optional
 
-# Third Party
+from typing import Union, Optional
 import torch
 
-# First Party
+
 from lmcache.logging import init_logger
 from lmcache.utils import CacheEngineKey
-from lmcache.test.test_token_database import TokenDatabase
+from lmcache.vcache.token_database import TokenDatabase
 
 logger = init_logger(__name__)
 
 
-class TestMooncakeLookupClient:
+class MooncakeLookupClient:
     """
-    Test Mooncake Lookup Client for scheduler role.
+    Mooncake Lookup Client for scheduler role.
     
     This client provides lookup functionality compatible with MooncakeStorageBackend's lookup method,
     allowing the scheduler to query Mooncake for cache hits without instantiating the full storage backend.
     """
     
     def __init__(self, vllm_config: "VllmConfig", master_addr: str):
-        """Initialize TestMooncakeLookupClient."""
+        """Initialize MooncakeLookupClient."""
         # Third Party
         from mooncake.store import MooncakeDistributedStore
         
@@ -43,10 +40,6 @@ class TestMooncakeLookupClient:
             "",
             master_addr,
         )
-        
-        # Initialize test token database for processing tokens
-        # Use TokenDatabase instead of ChunkedTokenDatabase
-        from lmcache.test.test_token_database import TokenDatabase
         
         # Create test metadata for token database
         model_config = vllm_config.model_config
@@ -88,105 +81,83 @@ class TestMooncakeLookupClient:
             'kv_shape': kv_shape
         }
         
-        logger.info(f"TestMooncakeLookupClient initialized with master address: {master_addr}")
+        logger.info(f"MooncakeLookupClient initialized with master address: {master_addr}")
     
     def lookup(
         self,
-        token_ids: Union[torch.Tensor, list[int]],
-        lookup_id: Optional[str] = None
+        tokens: list[int]
     ) -> int:
         """
         Lookup tokens in Mooncake store using simplified MooncakeStorageBackend lookup logic.
         
         Args:
-            token_ids: List of token IDs or torch.Tensor
-            lookup_id: Optional lookup ID for tracking
+            tokens: List of token IDs
             
         Returns:
             Number of hit tokens (continuous from the beginning)
         """
-        # Convert token_ids to list if it's a tensor
-        if isinstance(token_ids, torch.Tensor):
-            token_list = token_ids.tolist()
-        else:
-            token_list = token_ids
         
-        # Process token_ids to get all chunks using TokenDatabase
-        # IMPORTANT: Use the same parameters as TestCacheEngine.lookup() to ensure consistent cache key generation
-        # TestCacheEngine.lookup() calls process_tokens with mask=None and model_name="test_model"
+        # Process tokens to get all chunks using TokenDatabase
         all_chunks = []
         for start, end, cache_key in self.token_database.process_tokens(
-            tokens=token_list,
-            mask=None,  # Match TestCacheEngine.lookup() parameter
+            tokens=tokens,
+            mask=None, 
             make_key=True,
-            model_name="test_model"  # Match TestCacheEngine.lookup() parameter
+            model_name="test_model" 
         ):
-            # Debug logging for cache key generation
             if cache_key is not None:
-                logger.debug(f"TestMooncakeLookupClient: Generated cache_key for chunk [{start}, {end}): type={type(cache_key)}, "
-                           f"chunk_hash={getattr(cache_key, 'chunk_hash', 'N/A') if hasattr(cache_key, 'chunk_hash') else 'N/A'}")
+                logger.debug(f"MooncakeLookupClient: Generated cache_key for chunk [{start}, {end}): "
+                             f"type={type(cache_key)}, "
+                            f"chunk_hash={getattr(cache_key, 'chunk_hash', 'N/A') if hasattr(cache_key, 'chunk_hash') else 'N/A'}")
             all_chunks.append((start, end, cache_key))
         
         if not all_chunks:
-            logger.debug(f"TestMooncakeLookupClient: No chunks generated for {len(token_list)} tokens")
+            logger.debug(f"MooncakeLookupClient: No chunks generated for {len(tokens)} tokens")
             return 0
         
-        # Sort chunks by start position
-        sorted_chunks = sorted(all_chunks, key=lambda x: x[0])
         
         # Only check continuous chunks from the beginning (start=0)
         continuous_hit_tokens = 0
         expected_start = 0
         
-        for start, end, cache_key in sorted_chunks:
-            # Check if this chunk is continuous from the beginning
+        for start, end, cache_key in all_chunks:
             if start != expected_start:
                 # Found a gap, stop checking
-                logger.debug(f"TestMooncakeLookupClient: Gap found at start={start}, expected={expected_start}, stopping lookup")
+                logger.debug(f"MooncakeLookupClient: Gap found at start={start}," 
+                             f"expected={expected_start}, stopping lookup")
                 break
             
             # Skip chunks with None cache_key (masked chunks)
             if cache_key is None:
-                logger.debug(f"TestMooncakeLookupClient: Chunk [{start}, {end}) has None cache_key (masked), skipping")
+                logger.debug(f"MooncakeLookupClient: Chunk [{start}, {end}) has None cache_key (masked), skipping")
                 # Masked chunks are considered as hits for continuity
-                chunk_tokens = token_list[start:end]
+                chunk_tokens = tokens[start:end]
                 continuous_hit_tokens += len(chunk_tokens)
                 expected_start = end
                 continue
             
-            # Ensure cache_key is a CacheEngineKey object
-            if not isinstance(cache_key, CacheEngineKey):
-                logger.warning(f"TestMooncakeLookupClient: cache_key is not a CacheEngineKey object, type={type(cache_key)}")
-                # Try to convert to string anyway
-                key_str = str(cache_key)
+            if hasattr(cache_key, 'chunk_hash'):
+                key_str = str(cache_key.chunk_hash)
             else:
-                # Convert cache_key to string for Mooncake store
-                # Follow MooncakeStorageBackend.lookup logic: use chunk_hash if available
-                if hasattr(cache_key, 'chunk_hash'):
-                    # Use chunk_hash for LayerCacheEngineKey objects
-                    key_str = str(cache_key.chunk_hash)
-                else:
-                    key_str = str(cache_key)
+                key_str = str(cache_key)
             
-            logger.debug(f"TestMooncakeLookupClient: Checking key {key_str} for chunk [{start}, {end})")
+            logger.debug(f"MooncakeLookupClient: Checking key {key_str} for chunk [{start}, {end})")
             
-            # Check if key exists in Mooncake store (simplified version of MooncakeStorageBackend.lookup)
+            # Check if key exists in Mooncake store
             exists_result = self.store.is_exist(key_str)
             if exists_result == 1:
                 # Key exists, add to continuous hit tokens
-                chunk_tokens = token_list[start:end]
+                chunk_tokens = tokens[start:end]
                 continuous_hit_tokens += len(chunk_tokens)
                 expected_start = end
-                logger.debug(f"TestMooncakeLookupClient: Found hit for chunk [{start}, {end}): {len(chunk_tokens)} tokens")
+                logger.debug(f"MooncakeLookupClient: Found hit for chunk [{start}, {end}): "
+                             f"{len(chunk_tokens)} tokens")
             else:
                 # Key does not exist, stop checking
-                logger.debug(f"TestMooncakeLookupClient: Key {key_str} does not exist in Mooncake store, stopping lookup")
+                logger.debug(f"MooncakeLookupClient: Key {key_str} does not exist "
+                             f"in Mooncake store, stopping lookup")
                 break
         
-        logger.info(f"TestMooncakeLookupClient lookup: {continuous_hit_tokens} continuous hit tokens from {len(token_list)} total tokens")
+        logger.info(f"MooncakeLookupClient lookup: {continuous_hit_tokens} continuous "
+                    f"hit tokens from {len(tokens)} total tokens")
         return continuous_hit_tokens
-    
-    def close(self):
-        """Close the lookup client."""
-        # nothing here
-        pass

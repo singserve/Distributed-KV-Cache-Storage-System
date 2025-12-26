@@ -1,8 +1,8 @@
-# SPDX-License-Identifier: Apache-2.0
-"""
-Test Cache Engine Connector for vLLM
 
-This connector integrates the TestCacheEngine system with vLLM's KV connector interface,
+"""
+vCache Engine Connector for vLLM similar to LMCache connector
+
+This connector integrates the VCacheEngine system with vLLM's KV connector interface,
 providing enhanced features like GPU VRAM pool, cross-GPU transfers, and Mooncake storage.
 """
 
@@ -19,10 +19,10 @@ from lmcache.config import LMCacheEngineMetadata
 from lmcache.logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.utils import CacheEngineKey, cdiv
-from lmcache.test.test_config import VCacheConfig
-from lmcache.test.test_cache_engine_system import TestCacheEngine, MockGPUConnector
-from lmcache.test.blocked_kv_paged_connector import BlockedKVPagedMemConnector
-from lmcache.test.test_mooncake_lookup_client import TestMooncakeLookupClient
+from lmcache.vcache.vcache_config import VCacheConfig
+from lmcache.vcache.vcache_engine_system import VCacheEngine, MockGPUConnector
+from lmcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
+from lmcache.vcache.mooncake_lookup_client import MooncakeLookupClient
 
 # vLLM imports
 from vllm.config import VllmConfig
@@ -72,7 +72,7 @@ class LoadSpec:
     """Load specification for partial cache hits."""
     # Number of tokens cached in vLLM
     vllm_cached_tokens: int
-    # Number of tokens that are cached in TestCacheEngine
+    # Number of tokens that are cached in VCacheEngine
     test_cache_cached_tokens: int
     # Whether the scheduler allow us to load the tokens
     can_load: bool
@@ -89,7 +89,7 @@ class SaveSpec:
 
 @dataclass
 class RequestTracker:
-    """Track request state for TestCacheEngine connector."""
+    """Track request state for VCacheEngine connector."""
     # Request id
     req_id: str
     # Total prompt token length
@@ -146,9 +146,6 @@ class RequestTracker:
         self.token_ids.extend(new_token_ids)
 
         if new_block_ids is None:
-            # https://github.com/vllm-project/vllm/commit/
-            # b029de9902aa3ac58806c8c17776c7074175b6db#
-            # diff-cafd89ce8a698a56acb24ada62831cbc7a980782f78a52d1742ba238031f296cL94
             new_block_ids = []
         elif len(new_block_ids) == 0:
             new_block_ids = []
@@ -170,7 +167,7 @@ class RequestTracker:
 
 @dataclass
 class ReqMeta:
-    """Request metadata for TestCacheEngine connector."""
+    """Request metadata for VCacheEngine connector."""
     # Request id
     req_id: str
     # Request tokens
@@ -268,11 +265,11 @@ class ReqMeta:
         )
 
 
-class TestCacheEngineConnectorMetadata(KVConnectorMetadata):
-    """TestCacheEngine connector metadata for communication between scheduler and worker."""
+class VCacheEngineConnectorMetadata(KVConnectorMetadata):
+    """VCacheEngine connector metadata for communication between scheduler and worker."""
     
     def __init__(self):
-        # List of request metadata for TestCacheEngine
+        # List of request metadata for VCacheEngine
         self.requests: list[ReqMeta] = []
     
     def add_request(self, req_meta: ReqMeta) -> None:
@@ -284,9 +281,9 @@ class TestCacheEngineConnectorMetadata(KVConnectorMetadata):
         self.requests.append(req_meta)
 
 
-class TestCacheEngineConnectorV1(KVConnectorBase_V1):
+class VCacheEngineConnectorV1(KVConnectorBase_V1):
     """
-    vLLM Connector using TestCacheEngine system.
+    vLLM Connector using VCacheEngine system.
     
     This connector provides enhanced KV cache functionality including:
     - GPU VRAM pool management
@@ -304,7 +301,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         kv_cache_config: Any = None,
     ):
         """
-        Initialize the TestCacheEngine connector.
+        Initialize the VCacheEngine connector.
         
         Args:
             vllm_config: vLLM configuration
@@ -317,8 +314,8 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         
         self.vllm_config = vllm_config
         self._parent = parent
-        # Create TestCacheEngine configuration
-        self.test_config = self._create_test_config(vllm_config)
+        # Create VCacheEngine configuration
+        self.vcache_config = self._create_test_config(vllm_config)
         self.test_metadata = self._create_test_metadata(vllm_config, role)
         
         # Create GPU connector based on role
@@ -326,19 +323,17 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         # Worker needs BlockedKVPagedMemConnector for actual GPU data transfer
         if role == KVConnectorRole.SCHEDULER:
             # Scheduler doesn't need GPU connector for data transfer, only for lookup
-            # Pass None to TestCacheEngine for scheduler role
+            # Pass None to VCacheEngine for scheduler role
             gpu_connector = None
             logger.info(f"Scheduler role: No GPU connector needed for lookup operations")
         else:
             # Worker needs actual GPU connector for data transfer
-            # 从metadata中获取参数
             num_layers = self.test_metadata.kv_shape[0] if len(self.test_metadata.kv_shape) >= 5 else 32
             block_size = vllm_config.cache_config.block_size
             num_kv_heads = self.test_metadata.kv_shape[-2] if len(self.test_metadata.kv_shape) >= 4 else 32
             head_size = self.test_metadata.kv_shape[-1] if len(self.test_metadata.kv_shape) >= 4 else 128
             
             try:
-                # 确保device参数是torch.device对象，而不是字符串
                 device_str = f"cuda:{self.test_metadata.worker_id}" if self.test_metadata.worker_id is not None else "cuda:0"
                 device_obj = torch.device(device_str)
                 
@@ -354,11 +349,10 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
                 logger.info(f"Worker role: BlockedKVPagedMemConnector initialized: layers={num_layers}, block_size={block_size}, heads={num_kv_heads}, head_size={head_size}, device={device_str}")
             except Exception as e:
                 logger.error(f"Failed to initialize BlockedKVPagedMemConnector: {e}, falling back to MockGPUConnector")
-                gpu_connector = MockGPUConnector()
         
-        # Initialize TestCacheEngine
-        self.test_engine = TestCacheEngine(
-            config=self.test_config,
+        # Initialize VCacheEngine
+        self.vcache_engine = VCacheEngine(
+            config=self.vcache_config,
             metadata=self.test_metadata,
             gpu_connector=gpu_connector
         )
@@ -368,8 +362,8 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         if role == KVConnectorRole.SCHEDULER:
             try:
                 # Get master address from config
-                master_addr = self.test_config.get_extra_config_value("master_server_address", "127.0.0.1:50051")
-                self.mooncake_lookup_client = TestMooncakeLookupClient(vllm_config, master_addr)
+                master_addr = self.vcache_config.get_extra_config_value("master_server_address", "127.0.0.1:50051")
+                self.mooncake_lookup_client = MooncakeLookupClient(vllm_config, master_addr)
                 logger.info(f"MooncakeLookupClient initialized for scheduler role with master address: {master_addr}")
             except ImportError as e:
                 logger.warning(f"Failed to import MooncakeLookupClient: {e}")
@@ -408,15 +402,15 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         
         # Block size for slot mapping
         self._block_size = vllm_config.cache_config.block_size
-        self._chunk_size = 256  # Default chunk size for TestCacheEngine
+        self._chunk_size = 256  # Default chunk size for VCacheEngine
         
         # Events tracking
         self._events: list[Any] = []
         
-        logger.info(f"TestCacheEngineConnector initialized for role {role}")
+        logger.info(f"VCacheEngineConnector initialized for role {role}")
     
     def _create_test_config(self, vllm_config: "VllmConfig") -> VCacheConfig:
-        """Create TestCacheEngine configuration from vLLM config."""
+        """Create VCacheEngine configuration from vLLM config."""
         # Extract configuration from vLLM extra config
         kv_connector_extra_config = (
             vllm_config.kv_transfer_config.kv_connector_extra_config or {}
@@ -428,11 +422,11 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         if config_file_path and os.path.exists(config_file_path):
             # Load configuration from YAML file
             config = VCacheConfig.from_file(config_file_path)
-            logger.info(f"Loaded TestCacheEngine configuration from: {config_file_path}")
+            logger.info(f"Loaded VCacheEngine configuration from: {config_file_path}")
         else:
             # Use default configuration
             config = VCacheConfig.from_defaults()
-            logger.info("Using default TestCacheEngine configuration")
+            logger.info("Using default VCacheEngine configuration")
         
         # Set connector_role based on vLLM role
         if self._role == KVConnectorRole.SCHEDULER:
@@ -444,13 +438,13 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
             config.connector_role = "worker"
             logger.info("Set connector_role to 'worker'")
         
-        # No need to manually optimize other configuration - TestCacheEngine will handle it based on connector_role
+        # No need to manually optimize other configuration - VCacheEngine will handle it based on connector_role
         logger.info(f"Configuration created with connector_role={config.connector_role}")
         
         return config
     
     def _create_test_metadata(self, vllm_config: "VllmConfig", role: KVConnectorRole) -> LMCacheEngineMetadata:
-        """Create TestCacheEngine metadata from vLLM config."""
+        """Create VCacheEngine metadata from vLLM config."""
         model_config = vllm_config.model_config
         parallel_config = vllm_config.parallel_config
         cache_config = vllm_config.cache_config
@@ -460,9 +454,8 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         if hasattr(cache_config, 'cache_dtype'):
             cache_dtype = cache_config.cache_dtype
             logger.info(f"Raw cache_dtype from config: {cache_dtype}, type: {type(cache_dtype)}")
-            # 确保dtype是torch.dtype对象，而不是字符串
+
             if isinstance(cache_dtype, str):
-                # 将字符串转换为torch.dtype对象
                 if cache_dtype == "float16" or cache_dtype == "half":
                     kv_dtype = torch.float16
                 elif cache_dtype == "float32" or cache_dtype == "float":
@@ -506,14 +499,14 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
     @_lmcache_nvtx_annotate
     def start_load_kv(self, forward_context: "ForwardContext", **kwargs: Any) -> None:
         """
-        Start loading KV cache from TestCacheEngine to vLLM's paged buffer.
+        Start loading KV cache from VCacheEngine to vLLM's paged buffer.
         Implements batch mode logic (all layers at once) similar to LMCache v1 adapter.
         
         Args:
             forward_context: Forward context containing attention layers
             **kwargs: Additional arguments for load operation
         """
-        logger.info("Starting KV cache load from TestCacheEngine in batch mode (all layers at once)")
+        logger.info("Starting KV cache load from VCacheEngine in batch mode (all layers at once)")
         
         # Initialize KV caches if not already done (first load check)
         if len(self.kv_caches) == 0:
@@ -533,7 +526,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
             logger.warning("No connector metadata available for load operation")
             return
         
-        # Check if metadata has requests attribute (should be TestCacheEngineConnectorMetadata)
+        # Check if metadata has requests attribute (should be VCacheEngineConnectorMetadata)
         if not hasattr(metadata, 'requests'):
             logger.warning("Connector metadata doesn't have 'requests' attribute")
             return
@@ -569,7 +562,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
                 continue
             
             # Create token mask for partial loading - follow LMCache connector implementation
-            # True means the token needs to be loaded from TestCacheEngine
+            # True means the token needs to be loaded from VCacheEngine
             token_mask = torch.ones(len(token_ids), dtype=torch.bool)
             
             # Calculate masked token count - align to chunk boundaries like LMCache connector
@@ -592,9 +585,9 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
             )
             
             try:
-                # Use TestCacheEngine for retrieval with partial hit parameters
+                # Use VCacheEngine for retrieval with partial hit parameters
                 # Follow LMCache connector batch mode pattern: pass only cached tokens with aligned mask
-                ret_mask = self.test_engine.retrieve(
+                ret_mask = self.vcache_engine.retrieve(
                     tokens=token_ids[:test_cache_cached_tokens],  # Only cached tokens
                     mask=token_mask[:test_cache_cached_tokens],   # Mask for partial loading
                     kvcaches=kvcaches,                            # vLLM KV cache references
@@ -647,7 +640,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         **kwargs: Any,
     ) -> None:
         """
-        Save KV cache from vLLM to TestCacheEngine.
+        Save KV cache from vLLM to VCacheEngine.
         In batch mode (all layers at once), this method should return early like in LMCache v1 adapter.
         
         Args:
@@ -667,7 +660,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         Wait for all save operations to complete.
         In batch mode, this is where actual saving happens (all layers at once).
         """
-        logger.info("Starting KV cache save to TestCacheEngine in batch mode (all layers at once)")
+        logger.info("Starting KV cache save to VCacheEngine in batch mode (all layers at once)")
         
         # Ensure KV caches are initialized
         if len(self.kv_caches) == 0:
@@ -723,8 +716,8 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
             )
             
             try:
-                # Use TestCacheEngine for storage
-                self.test_engine.store(
+                # Use VCacheEngine for storage
+                self.vcache_engine.store(
                     tokens=token_ids,
                     mask=store_mask,
                     kvcaches=kvcaches,
@@ -755,7 +748,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         Returns:
             Tuple of (sending/saving IDs, receiving/loading IDs)
         """
-        # TestCacheEngine doesn't use asynchronous transfers
+        # VCacheEngine doesn't use asynchronous transfers
         return None, None
     
     def get_block_ids_with_load_errors(self) -> set[int]:
@@ -765,7 +758,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         Returns:
             Set of block IDs with load errors
         """
-        # TestCacheEngine doesn't track individual block errors
+        # VCacheEngine doesn't track individual block errors
         return set()
     
     # ==============================
@@ -799,8 +792,8 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         
         token_ids = request.prompt_token_ids
         
-        # Step 1: Use TestCacheEngine for GPU VRAM pool lookup
-        gpu_vram_hit_tokens = self.test_engine.lookup(token_ids)
+        # Step 1: Use VCacheEngine for GPU VRAM pool lookup
+        gpu_vram_hit_tokens = self.vcache_engine.lookup(token_ids)
         
         # Step 2: If no GPU VRAM hits, try Mooncake lookup (only for scheduler role)
         mooncake_hit_tokens = 0
@@ -907,7 +900,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         logger.info(f"New requests count: {len(scheduler_output.scheduled_new_reqs)}")
         logger.info(f"Cached requests type: {type(scheduler_output.scheduled_cached_reqs)}")
         
-        metadata = TestCacheEngineConnectorMetadata()
+        metadata = VCacheEngineConnectorMetadata()
         
         # Process finished requests
         for finished_req_id in scheduler_output.finished_req_ids:
@@ -1053,7 +1046,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         Returns:
             Tuple of (should defer block freeing, optional return parameters)
         """
-        # TestCacheEngine doesn't use asynchronous saving
+        # VCacheEngine doesn't use asynchronous saving
         return False, None
     
     # ==============================
@@ -1074,20 +1067,16 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
                 ]
     
     
-    # Remove the overridden _get_connector_metadata method
-    # Use the parent class implementation from KVConnectorBase_V1
-    
-    
     def get_stats(self) -> dict:
         """Get connector statistics."""
         stats = self.stats.copy()
         
-        # Add TestCacheEngine statistics with error handling
+        # Add VCacheEngine statistics with error handling
         try:
-            test_engine_stats = self.test_engine.get_stats()
+            test_engine_stats = self.vcache_engine.get_stats()
             stats["test_engine_stats"] = test_engine_stats
         except Exception as e:
-            logger.warning(f"Failed to get TestCacheEngine statistics: {e}")
+            logger.warning(f"Failed to get VCacheEngine statistics: {e}")
             stats["test_engine_stats"] = {"error": str(e), "status": "unavailable"}
         
         stats.update({
@@ -1107,14 +1096,14 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
     
     def shutdown(self):
         """Shutdown the connector and clean up resources."""
-        logger.info("Shutting down TestCacheEngineConnector")
+        logger.info("Shutting down VCacheEngineConnector")
         
         try:
             if hasattr(self, 'test_engine'):
-                self.test_engine.close()
-                logger.info("TestCacheEngine closed successfully")
+                self.vcache_engine.close()
+                logger.info("VCacheEngine closed successfully")
         except Exception as e:
-            logger.error(f"Error closing TestCacheEngine: {e}")
+            logger.error(f"Error closing VCacheEngine: {e}")
             self.stats["transfer_errors"] += 1
         
         # Clear all internal state
@@ -1124,7 +1113,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
         self.load_specs.clear()
         self._events.clear()
         
-        logger.info("TestCacheEngineConnector shutdown completed")
+        logger.info("VCacheEngineConnector shutdown completed")
     
     def get_kv_connector_stats(self) -> Optional[Any]:
         """Get KV connector statistics."""
@@ -1133,7 +1122,7 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
     
     def update_connector_output(self, connector_output: Any):
         """Update connector state from worker-side connector output."""
-        # TestCacheEngine doesn't need to update from worker output
+        # VCacheEngine doesn't need to update from worker output
         pass
     
     def take_events(self):
@@ -1144,23 +1133,23 @@ class TestCacheEngineConnectorV1(KVConnectorBase_V1):
     
     def get_handshake_metadata(self) -> Optional[Any]:
         """Get handshake metadata for connector communication."""
-        # TestCacheEngine doesn't require handshake metadata
+        # VCacheEngine doesn't require handshake metadata
         return None
     
     def set_xfer_handshake_metadata(self, metadata: dict[int, Any]) -> None:
         """Set handshake metadata for connector communication."""
-        # TestCacheEngine doesn't require handshake metadata
+        # VCacheEngine doesn't require handshake metadata
         pass
     
     @classmethod
     def get_required_kvcache_layout(cls, vllm_config: "VllmConfig") -> str | None:
         """Get the required KV cache layout for this connector."""
-        # TestCacheEngine works with standard vLLM layouts
+        # VCacheEngine works with standard vLLM layouts
         return None
     
     def get_finished_count(self) -> int | None:
         """Get the count of requests expected to complete send/receive operations."""
-        # TestCacheEngine doesn't use asynchronous transfers
+        # VCacheEngine doesn't use asynchronous transfers
         return None
     
     def clear_connector_metadata(self) -> None:

@@ -252,7 +252,9 @@ class MooncakeStorageBackend:
         # Check if stored tokens match the prefix of input tokens
         for i in range(len(stored_tokens)):
             if stored_tokens[i] != input_tokens[i]:
-                logger.warning(f"Token mismatch at position {i}: stored={stored_tokens[i]}, input={input_tokens[i]}")
+                logger.warning(f"Token mismatch at position {i}: "
+                               f"stored={stored_tokens[i]}, "
+                               f"input={input_tokens[i]}")
                 return False
         
         return True

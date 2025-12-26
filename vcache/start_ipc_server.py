@@ -1,12 +1,8 @@
 import sys
 import time
 import signal
-import threading
 import os
 
-# Add the project root to sys.path so lmcache can be imported
-# Current file: LMCache/lmcache/test/start_ipc_server.py
-# Project root: d:/vllm_mooncake (where LMCache directory is located)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 if project_root not in sys.path:
