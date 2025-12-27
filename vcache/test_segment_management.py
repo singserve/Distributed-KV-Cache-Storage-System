@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script for GPUVRAMSegmentManager with linked list memory management and LRU eviction.
 """
@@ -6,26 +5,20 @@ Test script for GPUVRAMSegmentManager with linked list memory management and LRU
 import sys
 import os
 
-# 保存原始sys.path
 original_sys_path = sys.path.copy()
 
-# 临时移除LMCache目录，避免循环导入
 lmcache_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if lmcache_path in sys.path:
     sys.path.remove(lmcache_path)
 
-# 现在导入torch和其他标准库模块
 import torch
 import time
 
-# 恢复sys.path
 sys.path = original_sys_path
-
-# 添加路径以便导入
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lmcache.test.gpu_vram_segment_manager import GPUVRAMSegmentManager, GPUVRAMSegment, MemoryBlock
-from lmcache.test.test_vram_kvcache_unit import TestVRAMKVCacheUnit
+from lmcache.vcache.gpu_vram_segment_manager import GPUVRAMSegmentManager, GPUVRAMSegment, MemoryBlock
+from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
 from lmcache.utils import CacheEngineKey
 
 class MockConfig:

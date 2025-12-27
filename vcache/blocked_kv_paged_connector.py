@@ -345,7 +345,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         # 3. check slot_mapping valid
         if start >= len(slot_mapping) or end > len(slot_mapping):
             raise ValueError(
-                f"slot_mapping out of bound: start={start}, end={end}, "
+                f"slot_mapping out of bounds: start={start}, end={end}, "
                 f"slot_mapping length={len(slot_mapping)}"
             )
         
@@ -442,8 +442,8 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         
         if start >= len(slot_mapping) or end > len(slot_mapping):
             raise ValueError(
-                f"slot_mapping索引越界: start={start}, end={end}, "
-                f"slot_mapping长度={len(slot_mapping)}"
+                f"slot_mapping out of bounds: start={start}, end={end}, "
+                f"slot_mapping length={len(slot_mapping)}"
             )
         
         slot_mapping_slice = slot_mapping[start:end]

@@ -74,12 +74,12 @@ class VCacheEngine:
             self.vram_metadata_client = get_vram_metadata_ipc_client(self.config)
             
             # Check if IPC client is connected
-            if self.vram_metadata_client.is_connected:
+            if self.vram_metadata_client and self.vram_metadata_client.is_connected:
                 logger.info("VRAM metadata IPC client connected successfully")
                 # No local GPU VRAM manager in IPC mode - all operations go through IPC client
             else:
+                logger.warning("VRAM metadata IPC client not connected, disabling GPU VRAM pool")
                 self.vram_metadata_client = None
-                assert self.vram_metadata_client.is_connected, "VRAM metadata IPC client must be connected"                         
         else:
             logger.warning("GPU VRAM pool disabled in configuration")
         
@@ -90,9 +90,12 @@ class VCacheEngine:
         if connector_role == "worker":
             if TRANSFER_ENGINE_AVAILABLE:
                 self.transfer_engine_manager = TransferEngineManager(self.config)
+                if self.transfer_engine_manager is None:
+                    logger.error("Failed to initialize transfer engine manager")
+                    raise RuntimeError("Transfer engine must be initialized if enabled")
             else:
                 logger.error("Transfer engine not available")
-                assert self.transfer_engine_manager is not None, "Transfer engine must be initialized if enabled"
+                raise RuntimeError("Transfer engine must be available for worker role")
         else:
             logger.info(f"Transfer engine disabled (connector_role={connector_role})")
 
@@ -108,9 +111,12 @@ class VCacheEngine:
                     self.transfer_engine_manager,  # Pass transfer engine manager for segment buffer registration
                     self.vram_metadata_client  # Pass GPU VRAM Pool Manager client for metadata registration
                 )
+                if self.segment_manager is None:
+                    logger.error("Failed to initialize GPU VRAM segment manager")
+                    raise RuntimeError("GPU VRAM segments must be initialized if enabled")
             else:
                 logger.error("GPU VRAM segments disabled in configuration")
-                assert self.segment_manager is not None, "GPU VRAM segments must be initialized if enabled"
+                raise RuntimeError("GPU VRAM segments must be enabled for worker role")
         else:
             logger.info(f"GPU VRAM segments disabled (connector_role={connector_role})")
 
@@ -167,7 +173,7 @@ class VCacheEngine:
             "gpu_vram_misses": 0,
             "cross_gpu_transfers": 0
         } 
-        logger.info(f"TestCacheEngine initialized for GPU {self.metadata.worker_id}"
+        logger.info(f"VCacheEngine initialized for GPU {self.metadata.worker_id} "
                     f"with connector_role={connector_role}")
 
 
