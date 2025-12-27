@@ -186,7 +186,7 @@ KVConnectorFactory.register_connector(
 )
 
 KVConnectorFactory.register_connector(
-    "TestCacheEngineConnectorV1",
-    "vllm.distributed.kv_transfer.kv_connector.v1.test_cache_engine_connector",
-    "TestCacheEngineConnectorV1",
+    "VCacheEngineConnectorV1",
+    "vllm.distributed.kv_transfer.kv_connector.v1.vcache_engine_connector",
+    "VCacheEngineConnectorV1",
 )
