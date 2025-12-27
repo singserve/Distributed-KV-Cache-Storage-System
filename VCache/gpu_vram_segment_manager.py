@@ -1,19 +1,19 @@
-# SPDX-License-Identifier: Apache-2.0
-# Standard
+'''
+VRAM management
+Memory block and Segment manage metadata such as allocation status, size, and pointers to next blocks.
+Segment manager handles real GPU memory allcation/deallocation and it allocates all memory when initialized.
+'''
+
+
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 import threading
 import time
-import uuid
-import os
-from collections import defaultdict
-# Third Party
 import torch
 
-# First Party
 from lmcache.logging import init_logger
-from lmcache.test.test_vram_kvcache_unit import TestVRAMKVCacheUnit
-from lmcache.utils import CacheEngineKey, LayerCacheEngineKey
+from lmcache.VCache.vram_kvcache_unit import VRAMKVCacheUnit
+from lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)
 
@@ -60,25 +60,10 @@ class MemoryBlock:
         
         return new_block
     
-    def merge_with_next(self) -> bool:
-        """
-        Merge this block with the next block if both are free.
-        
-        Returns:
-            True if merge successful, False otherwise
-        """
-        if self.next is None or self.is_allocated or self.next.is_allocated:
-            return False
-        
-        # Merge with next block
-        self.size += self.next.size
-        self.next = self.next.next
-        return True
-
 
 @dataclass
 class GPUVRAMSegment:
-    """GPU VRAM segment for data exchange, inspired by MooncakeStore segment management."""
+    """GPU VRAM segment for data exchange"""
     segment_id: str  # Unique segment identifier
     gpu_id: int  # GPU device ID
     base_address: int  # Base GPU memory address
@@ -91,6 +76,9 @@ class GPUVRAMSegment:
     free_blocks_head: Optional[MemoryBlock] = None  # Linked list of free blocks
     allocated_blocks_head: Optional[MemoryBlock] = None  # Linked list of allocated blocks
     
+    # VRAM Unit management 
+    _vram_units: Dict[Union[str, CacheEngineKey], VRAMKVCacheUnit] = None  # cache_key -> VRAM unit
+    
     def __post_init__(self):
         if self.created_time == 0.0:
             self.created_time = time.time()
@@ -100,6 +88,9 @@ class GPUVRAMSegment:
         # Initialize with one free block covering the entire segment
         self.free_blocks_head = MemoryBlock(start=0, size=self.size, is_allocated=False)
         self.allocated_blocks_head = None
+        
+        # Initialize VRAM unit management
+        self._vram_units = {}
     
     @property
     def used_size(self) -> int:
@@ -166,6 +157,12 @@ class GPUVRAMSegment:
             # Add remaining block back to free list
             remaining_block.next = self.free_blocks_head
             self.free_blocks_head = remaining_block
+            
+            # After adding the remaining block, we need to merge adjacent free blocks
+            # to avoid fragmentation. Use the more efficient method first.
+            if not self._merge_with_adjacent_free_blocks(remaining_block):
+                # If the efficient method didn't merge, fall back to full merge
+                self._merge_free_blocks()
         
         # Mark as allocated
         best_fit_block.is_allocated = True
@@ -202,7 +199,11 @@ class GPUVRAMSegment:
         self._add_to_free_list(block)
         
         # Merge with adjacent free blocks
-        self._merge_free_blocks()
+        # First try the efficient method that only checks adjacent blocks
+        if not self._merge_with_adjacent_free_blocks(block):
+            # If the efficient method didn't merge
+            # fall back to full merge to handle complex cases
+            self._merge_free_blocks()
         
         # Update access time
         self.last_access_time = time.time()
@@ -275,7 +276,7 @@ class GPUVRAMSegment:
             prev.next = block
     
     def _merge_free_blocks(self):
-        """Merge adjacent free blocks in the free list."""
+        """Merge all free blocks in the free list."""
         if self.free_blocks_head is None:
             return
         
@@ -309,6 +310,71 @@ class GPUVRAMSegment:
                     prev_block.next = block
                     block.next = None
                     prev_block = block
+    
+    def _merge_with_adjacent_free_blocks(self, new_block: MemoryBlock) -> bool:
+        """
+        Merge a newly added free block with adjacent free blocks.
+        This is more efficient than rebuilding the entire free list.
+        
+        The free list is maintained in sorted order by start address,
+        so we can efficiently find adjacent blocks.
+        
+        Args:
+            new_block: The newly added free block
+            
+        Returns:
+            True if any merge occurred, False otherwise
+        """
+        if self.free_blocks_head is None:
+            return False
+        
+        merged = False
+        
+        # Find the position of new_block in the free list
+        prev = None
+        current = self.free_blocks_head
+        
+        # First, try to find if new_block is adjacent to any existing block
+        while current:
+            if current.end == new_block.start:
+                # Case 1: current block is immediately before new_block
+                # Merge new_block into current block
+                current.size += new_block.size
+                merged = True
+                
+                # After merging with new_block, check if current is now adjacent to next block
+                # This handles: free_block_A + new_block + free_block_B
+                while current.next and current.end == current.next.start:
+                    # Keep merging with consecutive adjacent blocks
+                    current.size += current.next.size
+                    current.next = current.next.next
+                    merged = True
+                
+                break
+            elif new_block.end == current.start:
+                # Case 2: new_block is immediately before current block
+                # Merge new_block into current block
+                current.start = new_block.start
+                current.size += new_block.size
+                merged = True
+                
+                # After merging new_block into current, check if prev is adjacent to current
+                # This handles: free_block_A + new_block + free_block_B
+                if prev and prev.end == current.start:
+                    # Merge prev with current
+                    prev.size += current.size
+                    prev.next = current.next
+                    # Now check if the merged block is adjacent to the next block
+                    while prev.next and prev.end == prev.next.start:
+                        prev.size += prev.next.size
+                        prev.next = prev.next.next
+                
+                break
+            
+            prev = current
+            current = current.next
+        
+        return merged
     
     def get_block_by_offset(self, offset: int) -> Optional[MemoryBlock]:
         """Find allocated block by offset."""
@@ -347,45 +413,164 @@ class GPUVRAMSegment:
             "free_blocks_count": free_count,
             "largest_free_block": largest_free_block
         }
+    
+    # VRAM Unit Management Methods
+    def register_vram_unit(self, vram_unit: VRAMKVCacheUnit) -> bool:
+        """
+        Register a VRAM unit in this segment.
+        
+        Args:
+            vram_unit: VRAM unit to register
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        cache_key = vram_unit.cache_key
+        if cache_key in self._vram_units:
+            logger.debug(f"VRAM unit {cache_key} already registered in segment {self.segment_id}")
+            return True
+        
+        self._vram_units[cache_key] = vram_unit
+        logger.debug(f"Registered VRAM unit {cache_key} in segment {self.segment_id}")
+        return True
+    
+    def unregister_vram_unit(self, cache_key: Union[str, CacheEngineKey]) -> bool:
+        """
+        Unregister a VRAM unit from this segment.
+        
+        Args:
+            cache_key: Cache key of the VRAM unit to unregister
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if cache_key not in self._vram_units:
+            logger.warning(f"VRAM unit {cache_key} not found in segment {self.segment_id}")
+            return False
+        
+        del self._vram_units[cache_key]
+        logger.debug(f"Unregistered VRAM unit {cache_key} from segment {self.segment_id}")
+        return True
+    
+    def get_vram_unit(self, cache_key: Union[str, CacheEngineKey]) -> Optional[VRAMKVCacheUnit]:
+        """
+        Get a VRAM unit from this segment and update its access time.
+        
+        Args:
+            cache_key: Cache key of the VRAM unit
+            
+        Returns:
+            VRAM unit or None if not found
+        """
+        vram_unit = self._vram_units.get(cache_key)
+        if vram_unit:
+            vram_unit.update_access_time()
+            logger.debug(f"Updated access time for VRAM unit {cache_key} in segment {self.segment_id}")
+        return vram_unit
+    
+    def get_all_vram_units(self) -> List[VRAMKVCacheUnit]:
+        """
+        Get all VRAM units in this segment.
+        
+        Returns:
+            List of all VRAM units
+        """
+        return list(self._vram_units.values())
+    
+    def get_vram_unit_count(self) -> int:
+        """
+        Get the number of VRAM units in this segment.
+        
+        Returns:
+            Number of VRAM units
+        """
+        return len(self._vram_units)
+    
+    def get_oldest_vram_unit(self) -> Optional[Tuple[Union[str, CacheEngineKey], VRAMKVCacheUnit]]:
+        """
+        Get the oldest VRAM unit in this segment (LRU).
+        
+        Returns:
+            Tuple of (cache_key, vram_unit) or None if no VRAM units
+        """
+        if not self._vram_units:
+            return None
+        
+        oldest_key = None
+        oldest_time = float('inf')
+        
+        for cache_key, vram_unit in self._vram_units.items():
+            if vram_unit.last_access_time < oldest_time:
+                oldest_time = vram_unit.last_access_time
+                oldest_key = cache_key
+        
+        if oldest_key:
+            return oldest_key, self._vram_units[oldest_key]
+        return None
+    
+    def clear_vram_units(self) -> bool:
+        """
+        Clear all VRAM units from this segment.
+        
+        Returns:
+            True if successful
+        """
+        self._vram_units.clear()
+        logger.debug(f"Cleared all VRAM units from segment {self.segment_id}")
+        return True
+    
+    def get_vram_unit_stats(self) -> dict:
+        """
+        Get VRAM unit statistics for this segment.
+        
+        Returns:
+            Dictionary with VRAM unit statistics
+        """
+        total_allocated_size = 0
+        for vram_unit in self._vram_units.values():
+            total_allocated_size += vram_unit.allocated_size
+        
+        return {
+            "segment_id": self.segment_id,
+            "vram_unit_count": len(self._vram_units),
+            "total_allocated_size": total_allocated_size,
+            "vram_unit_keys": list(self._vram_units.keys())
+        }
 
 
 class GPUVRAMSegmentManager:
     """
     GPU VRAM Segment Manager for managing GPU memory segments.
-    Each cache engine instance has its own segment manager for local GPU VRAM management.
+    Each vcache engine instance has its own segment manager for local GPU VRAM management.
     Handles segment allocation, deallocation, and space management for a specific GPU.
+    handles real GPU memory allcation when _allocate_gpu_segment is called.
+    after that, memory allocation just slice from pre-allocated segments.
     """
     
     def __init__(self, config, gpu_id: int, transfer_engine_manager=None, vram_metadata_client=None):
         self.config = config
         self.gpu_id = gpu_id
         self.transfer_engine_manager = transfer_engine_manager
-        self.vram_metadata_client = vram_metadata_client  # GPU VRAM Pool Manager client for metadata cleanup
-        self.lock = threading.RLock()
+        self.vram_metadata_client = vram_metadata_client 
         
         # GPU VRAM segment management for this specific GPU
         self.segments: List[GPUVRAMSegment] = []  # List of segments on this GPU
-        self.segment_entries: Dict[str, Set] = {}  # segment_id -> set of cache keys
         self.segment_size_mb = config.get_extra_config_value("gpu_vram_segment_size_mb", 256)  # Default 256MB per segment
         
         # Store tensor references to prevent garbage collection
         self._segment_tensors: Dict[str, torch.Tensor] = {}
         
-        # VRAM Unit management - 新增功能
-        self._vram_units: Dict[Union[str, CacheEngineKey], TestVRAMKVCacheUnit] = {}  # cache_key -> VRAM unit
-        self._segment_to_units: Dict[str, List[Union[str, CacheEngineKey]]] = defaultdict(list)  # segment_id -> [cache_key]
-        
         # Initialize GPU segments for this specific GPU
         self._initialize_gpu_segments()
         
-        logger.info(f"GPU VRAM Segment Manager initialized for GPU {gpu_id} with VRAM Unit management")
+        logger.info(f"GPU VRAM Segment Manager initialized for GPU {gpu_id}")
 
     def _initialize_gpu_segments(self):
         """Initialize GPU VRAM segments for this specific GPU."""
         try:
             # Allocate initial segment for this GPU
             self._allocate_gpu_segment()
-            logger.info(f"Initialized GPU VRAM segments for GPU {self.gpu_id}")
+            logger.debug(f"Initialized GPU VRAM segments for GPU {self.gpu_id}")
         except Exception as e:
             logger.error(f"Failed to initialize GPU VRAM segments for GPU {self.gpu_id}: {e}")
 
@@ -406,11 +591,9 @@ class GPUVRAMSegmentManager:
             
             # Allocate GPU memory using PyTorch
             # We'll create a tensor of the required size to get GPU memory
-            # 使用torch.uint8作为基础类型，因为它有1字节对齐，更容易重新解释为其他类型
-            # 计算uint8元素的数量
             num_elements = segment_size_bytes
             
-            # 使用torch.uint8分配内存，这样我们可以轻松地重新解释为任何dtype
+            # use uint8 tensor for 1-byte alignment
             tensor = torch.zeros(num_elements, dtype=torch.uint8, device='cuda')
             
             # Get the actual GPU memory address
@@ -432,20 +615,18 @@ class GPUVRAMSegmentManager:
             
             # Add to segment tracking
             self.segments.append(segment)
-            self.segment_entries[segment_id] = set()
             
-            logger.info(f"Allocated GPU VRAM segment on GPU {self.gpu_id}: {self.segment_size_mb}MB, "
-                       f"address: {hex(base_address)}, segment_id: {segment_id}")
+            logger.info(f"Allocated GPU VRAM segment on GPU {self.gpu_id}: "
+                        f"{self.segment_size_mb}MB, "
+                        f"address: {hex(base_address)}, "
+                        f"segment_id: {segment_id}")
             
             # Register segment with transfer engine if available
             if self.transfer_engine_manager and self.transfer_engine_manager.initialized:
                 try:
                     # Use transfer engine manager's method to register segment
-                    if hasattr(self.transfer_engine_manager, '_register_segment_with_engine'):
-                        self.transfer_engine_manager._register_segment_with_engine(segment)
-                        logger.info(f"Successfully registered segment {segment_id} with transfer engine")
-                    else:
-                        logger.warning("Transfer engine manager does not have _register_segment_with_engine method")
+                    self.transfer_engine_manager._register_segment_with_engine(segment)
+                    logger.debug(f"Successfully registered segment {segment_id} with transfer engine")
                 except Exception as e:
                     logger.error(f"Failed to register segment {segment_id} with transfer engine: {e}")
             
@@ -457,10 +638,7 @@ class GPUVRAMSegmentManager:
         except Exception as e:
             logger.error(f"Failed to allocate GPU VRAM segment on GPU {self.gpu_id}: {e}")
             # Restore original device in case of error
-            try:
-                torch.cuda.set_device(original_device)
-            except:
-                pass
+            torch.cuda.set_device(original_device)
             return None
 
     def get_available_segment(self, required_size: int) -> Optional[GPUVRAMSegment]:
@@ -487,39 +665,40 @@ class GPUVRAMSegmentManager:
         # No segment has a large enough contiguous free block
         # Try to evict LRU VRAM units to create larger contiguous free blocks
         logger.info(f"No segment has contiguous free block of size {required_size} bytes, "
-                   f"attempting LRU eviction on GPU {self.gpu_id}")
+                    f"attempting LRU eviction on GPU {self.gpu_id}")
         
         # Keep track of eviction attempts to avoid infinite loops
-        max_eviction_attempts = len(self._vram_units) * 2  # Safety limit
+        max_eviction_attempts = 100  # Safety limit
         eviction_attempts = 0
         
         while eviction_attempts < max_eviction_attempts:
-            # Find the oldest VRAM unit
+            # Find the segment with the oldest VRAM unit
+            oldest_segment = None
             oldest_key = None
             oldest_time = float('inf')
             
-            for cache_key, vram_unit in self._vram_units.items():
-                if vram_unit.last_access_time < oldest_time:
-                    oldest_time = vram_unit.last_access_time
-                    oldest_key = cache_key
+            for segment in self.segments:
+                if not segment.is_active:
+                    continue
+                    
+                # Get oldest VRAM unit in this segment
+                oldest_result = segment.get_oldest_vram_unit()
+                if oldest_result:
+                    cache_key, vram_unit = oldest_result
+                    if vram_unit.last_access_time < oldest_time:
+                        oldest_time = vram_unit.last_access_time
+                        oldest_key = cache_key
+                        oldest_segment = segment
             
-            if oldest_key is None:
+            if oldest_key is None or oldest_segment is None:
                 logger.error(f"No VRAM units to evict on GPU {self.gpu_id}")
                 break
             
-            # Get the segment for this VRAM unit
-            vram_unit = self._vram_units[oldest_key]
-            segment_id = vram_unit.segment_id
-            segment = self.get_segment_by_id(segment_id)
-            
-            if segment is None:
-                logger.error(f"Segment {segment_id} not found for VRAM unit {oldest_key}")
-                break
-            
-            logger.info(f"Evicting LRU VRAM unit {oldest_key} from segment {segment_id}, "
+            logger.info(f"Evicting LRU VRAM unit {oldest_key} from segment {oldest_segment.segment_id}, "
                        f"last accessed at {oldest_time}, size: {vram_unit.allocated_size} bytes")
             
-            # Evict the VRAM unit
+            # Evict the VRAM unit using the manager's remove method
+            # This will free the memory block and unregister the VRAM unit
             success = self.remove_vram_unit(oldest_key)
             if not success:
                 logger.error(f"Failed to evict VRAM unit {oldest_key}")
@@ -527,14 +706,14 @@ class GPUVRAMSegmentManager:
             
             eviction_attempts += 1
             
-            # After eviction, the segment will merge the freed block with adjacent free blocks
-            # Check if this segment now has a large enough contiguous free block
-            current = segment.free_blocks_head
+            # After eviction, check if this segment now has a large enough contiguous free block
+            current = oldest_segment.free_blocks_head
             while current:
                 if not current.is_allocated and current.size >= required_size:
-                    logger.info(f"After evicting {oldest_key}, segment {segment_id} now has "
-                               f"contiguous free block of size {current.size} >= {required_size}")
-                    return segment
+                    logger.info(f"After evicting {oldest_key}, "
+                                f"segment {oldest_segment.segment_id} now has "
+                                f"contiguous free block of size {current.size} >= {required_size}")
+                    return oldest_segment
                 current = current.next
             
             # Continue evicting more VRAM units if still not enough space
@@ -554,6 +733,7 @@ class GPUVRAMSegmentManager:
     def allocate_in_segment(self, size: int) -> Tuple[Optional[str], Optional[int]]:
         """
         Allocate space in a GPU VRAM segment for data storage on this GPU.
+        only update the segment metadata, actual GPU memory is pre-allocated.
         
         Args:
             size: Required size in bytes
@@ -574,14 +754,18 @@ class GPUVRAMSegmentManager:
         
         offset, allocated_block = allocation_result
         
-        logger.debug(f"Allocated {size} bytes in segment {segment.segment_id} on GPU {self.gpu_id}, "
-                    f"offset: {offset}, block_size: {allocated_block.size}")
+        logger.debug(f"Allocated {size} bytes "
+                     f"in segment {segment.segment_id} "
+                     f"on GPU {self.gpu_id}, "
+                     f"offset: {offset}, "
+                     f"block_size: {allocated_block.size}")
         
         return segment.segment_id, offset
 
     def free_segment_space(self, segment_id: str, offset: int, size: int) -> bool:
         """
         Free previously allocated space in a GPU VRAM segment.
+        only update the segment metadata, actual GPU memory is pre-allocated.
         
         Args:
             segment_id: Segment ID
@@ -652,77 +836,36 @@ class GPUVRAMSegmentManager:
         
         return segment.base_address + offset
 
-    def register_entry_in_segment(self, segment_id: str, entry_key) -> bool:
-        """
-        Register an entry in a segment on this GPU.
-        
-        Args:
-            segment_id: Segment ID
-            entry_key: Entry key to register
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if segment_id not in self.segment_entries:
-            logger.error(f"Segment {segment_id} not found for entry registration on GPU {self.gpu_id}")
-            return False
-        
-        self.segment_entries[segment_id].add(entry_key)
-        logger.debug(f"Registered entry {entry_key} in segment {segment_id} on GPU {self.gpu_id}")
-        return True
-
-    def unregister_entry_from_segment(self, segment_id: str, entry_key) -> bool:
-        """
-        Unregister an entry from a segment on this GPU.
-        
-        Args:
-            segment_id: Segment ID
-            entry_key: Entry key to unregister
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if segment_id not in self.segment_entries:
-            logger.warning(f"Segment {segment_id} not found for entry unregistration on GPU {self.gpu_id}")
-            return False
-        
-        if entry_key in self.segment_entries[segment_id]:
-            self.segment_entries[segment_id].remove(entry_key)
-            logger.debug(f"Unregistered entry {entry_key} from segment {segment_id} on GPU {self.gpu_id}")
-            return True
-        
-        logger.warning(f"Entry {entry_key} not found in segment {segment_id} on GPU {self.gpu_id}")
-        return False
 
     def get_segment_stats(self) -> dict:
         """Get GPU VRAM segment statistics for this GPU."""
-        with self.lock:
-            stats = {
-                "gpu_id": self.gpu_id,
-                "total_segments": len(self.segments),
-                "total_segment_size_bytes": 0,
-                "total_used_segment_bytes": 0,
-                "segment_utilization": {}
+        stats = {
+            "gpu_id": self.gpu_id,
+            "total_segments": len(self.segments),
+            "total_segment_size_bytes": 0,
+            "total_used_segment_bytes": 0,
+            "segment_utilization": {}
+        }
+        
+        for segment in self.segments:
+            stats["total_segment_size_bytes"] += segment.size
+            stats["total_used_segment_bytes"] += segment.used_size
+            
+            # Calculate segment utilization
+            utilization = (segment.used_size / segment.size) * 100 if segment.size > 0 else 0
+            stats["segment_utilization"][segment.segment_id] = {
+                "size_bytes": segment.size,
+                "used_bytes": segment.used_size,
+                "utilization_percent": utilization,
+                "entry_count": segment.get_vram_unit_count()
             }
-            
-            for segment in self.segments:
-                stats["total_segment_size_bytes"] += segment.size
-                stats["total_used_segment_bytes"] += segment.used_size
-                
-                # Calculate segment utilization
-                utilization = (segment.used_size / segment.size) * 100 if segment.size > 0 else 0
-                stats["segment_utilization"][segment.segment_id] = {
-                    "size_bytes": segment.size,
-                    "used_bytes": segment.used_size,
-                    "utilization_percent": utilization,
-                    "entry_count": len(self.segment_entries.get(segment.segment_id, set()))
-                }
-            
-            return stats
+        
+        return stats
 
     def cleanup_segment(self, segment_id: str) -> bool:
         """
         Clean up a GPU VRAM segment by removing all associated entries and VRAM units on this GPU.
+        this is to clean up segment metadata, actual GPU memory is pre-allocated.
         
         Args:
             segment_id: Segment ID to clean up
@@ -730,50 +873,46 @@ class GPUVRAMSegmentManager:
         Returns:
             True if successful, False otherwise
         """
-        with self.lock:
-            # 获取该segment中的所有VRAM units
-            units_to_remove = []
-            for cache_key, vram_unit in self._vram_units.items():
-                if vram_unit.segment_id == segment_id:
-                    units_to_remove.append(cache_key)
-            
-            # 移除所有VRAM units
-            for cache_key in units_to_remove:
-                self.remove_vram_unit(cache_key)
-            
-            if segment_id not in self.segment_entries:
-                logger.warning(f"Segment {segment_id} not found for cleanup on GPU {self.gpu_id}")
-                return False
-            
-            # Remove all entries associated with this segment
-            entries_to_remove = list(self.segment_entries[segment_id])
-            for entry_key in entries_to_remove:
-                self.unregister_entry_from_segment(segment_id, entry_key)
-            
-            # Clear segment entries
-            self.segment_entries[segment_id].clear()
-            
-            # Find and reset the segment
-            for segment in self.segments:
-                if segment.segment_id == segment_id:
-                    # Free all allocated blocks
-                    current = segment.allocated_blocks_head
-                    while current:
-                        next_block = current.next
-                        segment.free(current)
-                        current = next_block
-                    
-                    # Reset segment to initial state
-                    segment.free_blocks_head = MemoryBlock(start=0, size=segment.size, is_allocated=False)
-                    segment.allocated_blocks_head = None
-                    segment.last_access_time = time.time()
-                    
-                    logger.info(f"Cleaned up segment {segment_id} on GPU {self.gpu_id}, "
-                               f"freed all allocated blocks, reset free list")
-                    return True
-            
-            logger.error(f"Segment {segment_id} not found in GPU segments on GPU {self.gpu_id}")
+        segment = self.get_segment_by_id(segment_id)
+        if segment is None:
+            logger.warning(f"Segment {segment_id} not found for cleanup on GPU {self.gpu_id}")
             return False
+        
+        # clean segment VRAM units
+        vram_units = segment.get_all_vram_units()
+        for vram_unit in vram_units:
+            cache_key = vram_unit.cache_key
+            # free segment memory block
+            block = segment.get_block_by_offset(vram_unit.segment_offset)
+            if block:
+                segment.free(block)
+            # unregister VRAM unit
+            segment.unregister_vram_unit(cache_key)
+        
+        # Find and reset the segment
+        for seg in self.segments:
+            if seg.segment_id == segment_id:
+                # Free all allocated blocks
+                current = seg.allocated_blocks_head
+                while current:
+                    next_block = current.next
+                    seg.free(current)
+                    current = next_block
+                
+                # Reset segment to initial state
+                seg.free_blocks_head = MemoryBlock(start=0, size=seg.size, is_allocated=False)
+                seg.allocated_blocks_head = None
+                seg.last_access_time = time.time()
+                
+                seg.clear_vram_units()
+                
+                logger.info(f"Cleaned up segment {segment_id} "
+                            f"on GPU {self.gpu_id}, "
+                            f"freed all allocated blocks, reset free list, cleared VRAM units")
+                return True
+        
+        logger.error(f"Segment {segment_id} not found in GPU segments on GPU {self.gpu_id}")
+        return False
 
 
     def create_vram_unit(
@@ -785,272 +924,104 @@ class GPUVRAMSegmentManager:
         allocated_size: int,
         dtype: torch.dtype,
         original_shape: Optional[Tuple[int, ...]] = None
-    ) -> Optional[TestVRAMKVCacheUnit]:
+    ) -> Optional[VRAMKVCacheUnit]:
         """
-        在指定segment位置创建VRAM unit，用于存储展平的一维数据
+        create a VRAM unit that references a flattened tensor slice from a GPU VRAM segment.
+        use preallocated metadata (memory block in segment) to create the VRAM unit
+        use metadata to create a flattened tensor slice from segment memory.
         
         Args:
-            cache_key: 缓存键（可以是字符串、CacheEngineKey或LayerCacheEngineKey）
-            token_ids: token序列
+            cache_key: cache key
+            token_ids: token
             segment_id: segment ID
-            offset: segment内的偏移量（字节）
-            allocated_size: 分配的大小（字节）
-            dtype: tensor数据类型
-            original_shape: 原始tensor形状（用于恢复展平的数据）
+            offset: segment offset in bytes
+            allocated_size: in bytes
+            dtype: tensor data type
+            original_shape: original shape of the tensor before flattening
             
         Returns:
-            TestVRAMKVCacheUnit实例或None
+            TestVRAMKVCacheUnit or None if creation failed
         """
-        with self.lock:
-            # 获取segment信息
-            segment = self.get_segment_by_id(segment_id)
-            if segment is None:
-                logger.error(f"Segment {segment_id} not found")
-                return None
-            
-            # 验证偏移量和大小
-            if offset < 0 or offset + allocated_size > segment.size:
-                logger.error(f"Invalid allocation: offset={offset}, size={allocated_size}, segment_size={segment.size}")
-                return None
-            
-            # 获取segment tensor
-            if segment_id not in self._segment_tensors:
-                logger.error(f"Segment tensor not found for segment {segment_id}")
-                return None
-            
-            segment_tensor = self._segment_tensors[segment_id]
-            
-            # 计算在目标dtype中的元素数量
-            element_size_bytes = torch.tensor([], dtype=dtype).element_size()
-            num_elements = allocated_size // element_size_bytes
-            
-            # 验证分配的大小是否足够容纳整数个元素
-            if allocated_size % element_size_bytes != 0:
-                logger.error(f"Allocated size {allocated_size} bytes is not multiple of element size {element_size_bytes} bytes")
-                return None
-            
-            # 检查是否有足够的空间（以字节为单位）
-            if offset + allocated_size > segment.size:
-                logger.error(f"Not enough space in segment: offset={offset}, "
-                           f"allocated_size={allocated_size}, segment_size={segment.size}")
-                return None
-            
-            try:
-                # 直接切片：获取segment中对应位置的slice
-                # segment_tensor是uint8类型的一维tensor
-                byte_slice = segment_tensor[offset:offset + allocated_size]
-                
-                # 将uint8切片重新解释为目标dtype的一维tensor
-                # 使用view()方法改变dtype
-                flat_tensor = byte_slice.view(dtype)
-                
-                # 验证切片大小
-                if len(flat_tensor) != num_elements:
-                    logger.error(f"Slice size mismatch: expected {num_elements} elements, got {len(flat_tensor)}")
-                    return None
-                
-                # 验证tensor大小
-                actual_tensor_size = flat_tensor.element_size() * flat_tensor.nelement()
-                if actual_tensor_size != allocated_size:
-                    logger.error(f"Tensor size mismatch: expected {allocated_size}, got {actual_tensor_size}")
-                    return None
-                
-                # 创建VRAM unit（存储一维展平数据）
-                vram_unit = TestVRAMKVCacheUnit(
-                    cache_key=cache_key,
-                    token_ids=token_ids,
-                    segment_id=segment_id,
-                    segment_offset=offset,
-                    allocated_size=allocated_size,
-                    segment_base_address=segment.base_address,
-                    kv_cache_tensor=flat_tensor,  # 一维展平数据
-                    gpu_id=self.gpu_id,
-                    original_shape=original_shape  # 设置原始形状
-                )
-                
-                # 注册到内部管理
-                self._register_vram_unit(vram_unit)
-                
-                # 注册到segment entries（保持向后兼容）
-                self.register_entry_in_segment(segment_id, cache_key)
-                
-                logger.info(f"Created VRAM unit for flattened data: {cache_key} at segment {segment_id}, "
-                           f"offset {offset}, size {allocated_size} bytes, dtype {dtype}, "
-                           f"elements: {num_elements}, original_shape: {original_shape}")
-                
-                return vram_unit
-                
-            except Exception as e:
-                logger.error(f"Failed to create flattened tensor slice from segment {segment_id}: {e}")
-                return None
-
-    def _register_vram_unit(self, vram_unit: TestVRAMKVCacheUnit):
-        """内部注册VRAM unit"""
-        cache_key = vram_unit.cache_key
-        self._vram_units[cache_key] = vram_unit
-        self._segment_to_units[vram_unit.segment_id].append(cache_key)
+        segment = self.get_segment_by_id(segment_id)
+        if segment is None:
+            logger.error(f"Segment {segment_id} not found")
+            return None
         
-        logger.debug(f"Registered VRAM unit: {cache_key} in segment {vram_unit.segment_id}")
-
-    def get_vram_unit(self, cache_key: Union[str, CacheEngineKey]) -> Optional[TestVRAMKVCacheUnit]:
-        """根据cache key获取VRAM unit，并更新访问时间"""
-        with self.lock:
-            vram_unit = self._vram_units.get(cache_key)
-            if vram_unit:
-                vram_unit.update_access_time()
-                logger.debug(f"Updated access time for VRAM unit: {cache_key}")
+        if offset < 0 or offset + allocated_size > segment.size:
+            logger.error(f"Invalid allocation: offset={offset}, "
+                         f"size={allocated_size}, "
+                         f"segment_size={segment.size}")
+            return None
+        
+        if segment_id not in self._segment_tensors:
+            logger.error(f"Segment tensor not found for segment {segment_id}")
+            return None
+        
+        segment_tensor = self._segment_tensors[segment_id]
+        
+        # get element size in bytes for the given dtype
+        element_size_bytes = torch.tensor([], dtype=dtype).element_size()
+        num_elements = allocated_size // element_size_bytes
+        
+        # check allocated_size is multiple of element size
+        if allocated_size % element_size_bytes != 0:
+            logger.error(f"Allocated size {allocated_size} bytes "
+                         f"is not multiple of element size {element_size_bytes} bytes")
+            return None
+        
+        # check bounds
+        if offset + allocated_size > segment.size:
+            logger.error(f"Not enough space in segment: "
+                         f"offset={offset}, "
+                         f"allocated_size={allocated_size}, "
+                         f"segment_size={segment.size}")
+            return None
+        
+        try:
+            # slice the segment tensor to get the byte range
+            # segment_tensor is uint8 tensor
+            byte_slice = segment_tensor[offset:offset + allocated_size]
+            
+            # reshape to 1D tensor of the correct dtype
+            flat_tensor = byte_slice.view(dtype)
+            
+            # check number of elements
+            if len(flat_tensor) != num_elements:
+                logger.error(f"Slice size mismatch: expected {num_elements} elements, got {len(flat_tensor)}")
+                return None
+            
+            # check tenor size
+            actual_tensor_size = flat_tensor.element_size() * flat_tensor.nelement()
+            if actual_tensor_size != allocated_size:
+                logger.error(f"Tensor size mismatch: expected {allocated_size}, got {actual_tensor_size}")
+                return None
+            
+            vram_unit = VRAMKVCacheUnit(
+                cache_key=cache_key,
+                token_ids=token_ids,
+                segment_id=segment_id,
+                segment_offset=offset,
+                allocated_size=allocated_size,
+                segment_base_address=segment.base_address,
+                kv_cache_tensor=flat_tensor, 
+                gpu_id=self.gpu_id,
+                original_shape=original_shape 
+            )
+            
+            success = segment.register_vram_unit(vram_unit)
+            if not success:
+                logger.error(f"Failed to register VRAM unit {cache_key} in segment {segment_id}")
+                return None
+            
+            logger.info(f"Created VRAM unit for flattened data: {cache_key} at segment {segment_id}, "
+                       f"offset {offset}, size {allocated_size} bytes, dtype {dtype}, "
+                       f"elements: {num_elements}, original_shape: {original_shape}")
+            
             return vram_unit
-
-    def batch_get_vram_units(self, cache_keys: List[Union[str, CacheEngineKey]]) -> List[Optional[TestVRAMKVCacheUnit]]:
-        """
-        批量获取VRAM units，并更新访问时间
-        
-        Args:
-            cache_keys: cache key列表
             
-        Returns:
-            对应的VRAM unit列表，如果某个key不存在则返回None
-        """
-        with self.lock:
-            result = []
-            for cache_key in cache_keys:
-                vram_unit = self._vram_units.get(cache_key)
-                if vram_unit:
-                    vram_unit.update_access_time()
-                    logger.debug(f"Updated access time for VRAM unit: {cache_key}")
-                result.append(vram_unit)
-            return result
-
-    def remove_vram_unit(self, cache_key: Union[str, CacheEngineKey]) -> bool:
-        """
-        移除VRAM unit并释放segment中的内存块
-        
-        Args:
-            cache_key: 要移除的cache key
-            
-        Returns:
-            是否成功移除
-        """
-        with self.lock:
-            if cache_key not in self._vram_units:
-                return False
-            
-            vram_unit = self._vram_units[cache_key]
-            segment_id = vram_unit.segment_id
-            offset = vram_unit.segment_offset
-            size = vram_unit.allocated_size
-            
-            # 首先释放segment中的内存块
-            segment = self.get_segment_by_id(segment_id)
-            if segment:
-                # 找到对应的内存块
-                block = segment.get_block_by_offset(offset)
-                if block:
-                    # 释放内存块
-                    success = segment.free(block)
-                    if not success:
-                        logger.warning(f"Failed to free memory block at offset {offset} in segment {segment_id}")
-                else:
-                    logger.warning(f"Memory block not found at offset {offset} in segment {segment_id}")
-            
-            # 清理segment索引
-            if cache_key in self._segment_to_units[segment_id]:
-                self._segment_to_units[segment_id].remove(cache_key)
-                if not self._segment_to_units[segment_id]:
-                    del self._segment_to_units[segment_id]
-            
-            # 清理segment entries
-            self.unregister_entry_from_segment(segment_id, cache_key)
-            
-            # 移除VRAM unit
-            del self._vram_units[cache_key]
-            
-            # 清理GPU VRAM Pool Manager中的metadata（如果可用）
-            if self.vram_metadata_client is not None:
-                try:
-                    # 检查cache_key是否是CacheEngineKey类型
-                    if isinstance(cache_key, CacheEngineKey):
-                        # 调用GPU VRAM Pool Manager的remove方法清理metadata
-                        metadata_removed = self.vram_metadata_client.remove(cache_key)
-                        if metadata_removed:
-                            logger.info(f"Successfully removed metadata from GPU VRAM Pool Manager for key: {cache_key}")
-                        else:
-                            logger.warning(f"Failed to remove metadata from GPU VRAM Pool Manager for key: {cache_key}")
-                    else:
-                        logger.warning(f"Cache key is not CacheEngineKey type, cannot remove from GPU VRAM Pool Manager: {type(cache_key)}")
-                except Exception as e:
-                    logger.error(f"Error removing metadata from GPU VRAM Pool Manager: {e}")
-            
-            logger.info(f"Removed VRAM unit: {cache_key} from segment {segment_id}, "
-                       f"freed {size} bytes at offset {offset}")
-            return True
-
-    def get_vram_units_by_segment(self, segment_id: str) -> List[TestVRAMKVCacheUnit]:
-        """获取指定segment中的所有VRAM units"""
-        with self.lock:
-            cache_keys = self._segment_to_units.get(segment_id, [])
-            return [self._vram_units[key] for key in cache_keys if key in self._vram_units]
-
-    def get_vram_unit_stats(self) -> dict:
-        """获取VRAM unit统计信息"""
-        with self.lock:
-            stats = {
-                "total_vram_units": len(self._vram_units),
-                "vram_units_by_segment": {},
-                "total_allocated_size": 0
-            }
-            
-            # 按segment统计VRAM units
-            for segment_id, cache_keys in self._segment_to_units.items():
-                stats["vram_units_by_segment"][segment_id] = len(cache_keys)
-            
-            # 计算总分配大小
-            for vram_unit in self._vram_units.values():
-                stats["total_allocated_size"] += vram_unit.allocated_size
-            
-            return stats
-
-
-    def cleanup_all_segments(self) -> bool:
-        """
-        清理所有segments和VRAM units
-        This should be called when the program is shutting down.
-        
-        Returns:
-            True if cleanup successful, False otherwise
-        """
-        with self.lock:
-            logger.info(f"Starting cleanup of all GPU VRAM segments and VRAM units on GPU {self.gpu_id}")
-            
-            # 清理所有VRAM units
-            self._vram_units.clear()
-            self._segment_to_units.clear()
-            
-            # Get all segment IDs from this GPU
-            all_segment_ids = [segment.segment_id for segment in self.segments]
-            
-            # Clean up all segment entries
-            for segment_id in all_segment_ids:
-                self.cleanup_segment(segment_id)
-            
-            # Release all GPU memory allocations
-            for segment_id, tensor in self._segment_tensors.items():
-                try:
-                    # Delete the tensor to release GPU memory
-                    del tensor
-                    logger.debug(f"Released GPU memory for segment {segment_id} on GPU {self.gpu_id}")
-                except Exception as e:
-                    logger.error(f"Failed to release GPU memory for segment {segment_id} on GPU {self.gpu_id}: {e}")
-            
-            # Clear the segment tensors dictionary
-            self._segment_tensors.clear()
-            
-            # Clear all segment tracking
-            self.segment_entries.clear()
-            self.segments.clear()
-            
-            logger.info(f"Successfully cleaned up all GPU VRAM segments and VRAM units on GPU {self.gpu_id}")
-            return True
+        except Exception as e:
+            logger.error(f"Failed to create flattened tensor slice from segment {segment_id}: {e}")
+            return None
 
     def shutdown(self) -> bool:
         """
@@ -1065,4 +1036,3 @@ class GPUVRAMSegmentManager:
         # Clean up all segments
         cleanup_success = self.cleanup_all_segments()
         return cleanup_success
-

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-跨GPU存储和检索测试
-将store逻辑和retrieve逻辑放到两个进程中，分别使用GPU0和GPU1
-验证数据在跨GPU传输后的完整性
+Cross-GPU Store and Retrieve Test
+Store logic and retrieve logic are placed in two processes, using GPU0 and GPU1 respectively
+Verify data integrity after cross-GPU transfer
 """
 
 import sys
 import os
 
-# 保存原始sys.path
+# Save original sys.path
 original_sys_path = sys.path.copy()
 
-# 临时移除LMCache目录，避免循环导入
+# Temporarily remove LMCache directory to avoid circular imports
 lmcache_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if lmcache_path in sys.path:
     sys.path.remove(lmcache_path)
 
-# 现在导入torch和其他标准库模块
+# Now import torch and other standard library modules
 import torch
 import random
 import time
@@ -24,26 +24,26 @@ import numpy as np
 import torch.multiprocessing as mp
 from torch.multiprocessing import Process, Queue, Event
 
-# 恢复sys.path
+# Restore sys.path
 sys.path = original_sys_path
 
-# 设置multiprocessing启动方法为'spawn'，以支持CUDA
+# Set multiprocessing start method to 'spawn' to support CUDA
 if mp.get_start_method(allow_none=True) is None:
     mp.set_start_method('spawn', force=True)
 
-# 添加路径以便导入
+# Add path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lmcache.test.test_cache_engine_system import TestCacheEngine
+from vcache.vcache_engine_system import VCacheEngine
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.test.test_config import TestConfig
+from vcache.vcache_config import VCacheConfig
 
 
 
 def generate_kv_cache_paged_list_tensors(
     num_blocks, device, block_size=16, dtype=torch.float16, use_mla=False
 ):
-    """生成分页KV cache数据"""
+    """Generate paged KV cache data"""
     ret = []
     num_layers = 4
     num_heads = 1 if use_mla else 8
@@ -63,22 +63,22 @@ def generate_kv_cache_paged_list_tensors(
 
 def check_paged_kv_cache_equal(kvcache1, kvcache2, slot_mapping, device="cuda:0"):
     """
-    检查两个kvcache在slot_mapping指定的位置是否相等
+    Check if two kvcaches are equal at positions specified by slot_mapping
     
     Args:
-        kvcache1: 第一个kvcache列表
-        kvcache2: 第二个kvcache列表  
-        slot_mapping: slot mapping tensor
-        device: 设备
+        kvcache1: First kvcache list
+        kvcache2: Second kvcache list  
+        slot_mapping: Slot mapping tensor
+        device: Device
     """
     num_layers = len(kvcache1)
-    block_size = kvcache1[0].shape[2]  # block_size维度
-    num_blocks = kvcache1[0].shape[1]  # num_blocks维度
+    block_size = kvcache1[0].shape[2]  # block_size dimension
+    num_blocks = kvcache1[0].shape[1]  # num_blocks dimension
     
     all_match = True
     max_diff = 0.0
     
-    # 将kvcache2移动到相同设备进行比较
+    # Move kvcache2 to the same device for comparison
     kvcache2_on_device = []
     for layer_idx in range(num_layers):
         kvcache2_on_device.append(kvcache2[layer_idx].to(device))
@@ -91,11 +91,11 @@ def check_paged_kv_cache_equal(kvcache1, kvcache2, slot_mapping, device="cuda:0"
         block_offset = slot % block_size
         
         for layer_idx in range(num_layers):
-            # 提取两个kvcache中相同位置的数据
+            # Extract data from same position in both kvcaches
             data1 = kvcache1[layer_idx][:, block_idx, block_offset, :, :]
             data2 = kvcache2_on_device[layer_idx][:, block_idx, block_offset, :, :]
             
-            # 计算差异
+            # Calculate difference
             diff = torch.abs(data1 - data2)
             current_max_diff = diff.max().item()
             max_diff = max(max_diff, current_max_diff)
@@ -110,18 +110,18 @@ def check_paged_kv_cache_equal(kvcache1, kvcache2, slot_mapping, device="cuda:0"
 
 def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_template, ready_event, done_event, result_queue):
     """
-    Store进程：在指定GPU上执行store操作
+    Store process: Execute store operation on specified GPU
     
     Args:
-        gpu_id: GPU ID (0或1)
-        config: TestConfig配置
+        gpu_id: GPU ID (0 or 1)
+        config: VCacheConfig configuration
         metadata: LMCacheEngineMetadata
-        tokens: token列表
-        slot_mapping_data: slot mapping数据（CPU上的列表）
-        kv_cache_template: KV cache模板（用于参考形状和数据类型）
-        ready_event: 准备就绪事件
-        done_event: 完成事件
-        result_queue: 结果队列
+        tokens: Token list
+        slot_mapping_data: Slot mapping data (list on CPU)
+        kv_cache_template: KV cache template (for reference shape and data type)
+        ready_event: Ready event
+        done_event: Done event
+        result_queue: Result queue
     """
     try:
         print(f"[Store Process GPU{gpu_id}] Starting store process...")
@@ -150,10 +150,10 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
         print(f"[Store Process GPU{gpu_id}] Store KV cache[0] address: {hex(store_kv_cache[0].data_ptr())}")
         print(f"[Store Process GPU{gpu_id}] Store KV cache shape: {store_kv_cache[0].shape}")
         
-        print(f"[Store Process GPU{gpu_id}] Creating TestCacheEngine...")
+        print(f"[Store Process GPU{gpu_id}] Creating VCacheEngine...")
         
-        # 创建TestCacheEngine
-        engine = TestCacheEngine(config, metadata, gpu_connector=None)
+        # 创建VCacheEngine
+        engine = VCacheEngine(config, metadata, gpu_connector=None)
         
         print(f"[Store Process GPU{gpu_id}] Performing store operation...")
         
@@ -210,7 +210,7 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
     
     Args:
         gpu_id: GPU ID (0或1)
-        config: TestConfig配置
+        config: VCacheConfig配置
         metadata: LMCacheEngineMetadata
         tokens: token列表
         slot_mapping_data: slot mapping数据（CPU上的列表）
@@ -246,8 +246,8 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
         # 使用generate_kv_cache_paged_list_tensors创建retrieve用的KV cache
         # 从模板获取参数
         num_blocks = kv_cache_template[0].shape[1]  # 获取block数量
-        block_size= kv_cache_template[0].shape[2]  # 获取block大小
-    
+        block_size = kv_cache_template[0].shape[2]  # 获取block大小
+        
         retrieve_kv_cache = generate_kv_cache_paged_list_tensors(
             num_blocks, device, block_size, kv_cache_template[0].dtype
         )
@@ -256,10 +256,10 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
         print(f"[Retrieve Process GPU{gpu_id}] Retrieve KV cache[0] address: {hex(retrieve_kv_cache[0].data_ptr())}")
         print(f"[Retrieve Process GPU{gpu_id}] Retrieve KV cache shape: {retrieve_kv_cache[0].shape}")
         
-        print(f"[Retrieve Process GPU{gpu_id}] Creating TestCacheEngine...")
+        print(f"[Retrieve Process GPU{gpu_id}] Creating VCacheEngine...")
         
-        # 创建TestCacheEngine
-        engine = TestCacheEngine(config, metadata, gpu_connector=None)
+        # 创建VCacheEngine
+        engine = VCacheEngine(config, metadata, gpu_connector=None)
         
         print(f"[Retrieve Process GPU{gpu_id}] Performing retrieve operation...")
         
@@ -331,29 +331,29 @@ def test_cross_gpu_store_retrieve():
         
         # 1. 创建配置 - GPU0配置
         print("\n1. Creating configuration for GPU0...")
-        config_path_gpu0 = "./test_system_config_gpu0.yaml"
+        config_path_gpu0 = "./vcache_config_gpu0.yaml"
         try:
-            config_gpu0 = TestConfig.from_file(config_path_gpu0)
+            config_gpu0 = VCacheConfig.from_file(config_path_gpu0)
             config_gpu0.connector_role = "worker"  
-            print(f"Successfully loaded config from file: {config_path_gpu0}")
+            print(f"✓ Successfully loaded config from file: {config_path_gpu0}")
         except Exception as e:
-            print(f"Falling back to default config for GPU0 due to: {e}")
-            config_gpu0 = TestConfig()
+            print(f"⚠ Falling back to default config for GPU0 due to: {e}")
+            config_gpu0 = VCacheConfig()
             config_gpu0.enable_gpu_vram_pool = True  # 启用GPU VRAM池以支持跨GPU传输
             config_gpu0.enable_gpu_vram_segments = True
             config_gpu0.gpu_vram_segment_size_mb = 256
-            config_gpu0.connector_role = "worker"    # 设置worker_id为0
+            config_gpu0.connector_role = "worker"    #worker
         
         # 2. 创建配置 - GPU1配置
         print("\n2. Creating configuration for GPU1...")
-        config_path_gpu1 = "./test_system_config_gpu1.yaml"
+        config_path_gpu1 = "./vcache_config_gpu1.yaml"
         try:
-            config_gpu1 = TestConfig.from_file(config_path_gpu1)
+            config_gpu1 = VCacheConfig.from_file(config_path_gpu1)
             config_gpu1.connector_role = "worker"  
             print(f"✓ Successfully loaded config from file: {config_path_gpu1}")
         except Exception as e:
             print(f"⚠ Falling back to default config for GPU1 due to: {e}")
-            config_gpu1 = TestConfig()
+            config_gpu1 = VCacheConfig()
             config_gpu1.enable_gpu_vram_pool = True  # 启用GPU VRAM池以支持跨GPU传输
             config_gpu1.enable_gpu_vram_segments = True
             config_gpu1.gpu_vram_segment_size_mb = 256
@@ -478,7 +478,6 @@ def test_cross_gpu_store_retrieve():
             print(f"  Retrieve KV cache address: {retrieve_result.get('retrieve_kv_cache_ptr', 'N/A')}")
             print(f"  Retrieve data sample: {retrieve_result.get('retrieve_data_sample', 'N/A')}")
             
-            # 注意：由于store和retrieve使用不同的随机生成数据，完整性检查需要额外处理
             print(f"  Note: Store and retrieve use independently generated data")
             print(f"  Data integrity check requires shared data between processes")
         else:
@@ -491,11 +490,11 @@ def test_cross_gpu_store_retrieve():
         print("\n10. Overall Test Result:")
         print("-" * 40)
         if success:
-            print("CROSS-GPU STORE/RETRIEVE TEST PASSED")
+            print("✓ CROSS-GPU STORE/RETRIEVE TEST PASSED")
             print("  Data successfully stored on GPU0 and retrieved on GPU1")
             print("  Two independent cache engines with different configs")
         else:
-            print("CROSS-GPU STORE/RETRIEVE TEST FAILED")
+            print("✗ CROSS-GPU STORE/RETRIEVE TEST FAILED")
         
         return success
         
@@ -515,9 +514,8 @@ if __name__ == "__main__":
     cross_gpu_success = test_cross_gpu_store_retrieve()
     
     if cross_gpu_success:
-        print("\nCROSS-GPU TEST PASSED")
+        print("\n✓ CROSS-GPU TEST PASSED")
         sys.exit(0)
     else:
-        print("\nCROSS-GPU TEST FAILED")
+        print("\n✗ CROSS-GPU TEST FAILED")
         sys.exit(1)
-
