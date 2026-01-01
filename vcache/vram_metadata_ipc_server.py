@@ -62,6 +62,8 @@ class VRAMMetadataIPCServer:
             'get_stats': 0,
             'health_check': 0
         }
+        # Mapping for registered segment IPC handles: base_ptr -> {segment_id, handle_bytes, gpu_id, size, time}
+        self.segment_ipc_handles: Dict[int, Dict] = {}
         
         logger.info(f"GPU VRAM Metadata IPC Server initialized on {self.address}:{self.port}")
 
@@ -77,6 +79,8 @@ class VRAMMetadataIPCServer:
         VRAMManager.register('batch_register_kvcache', self.batch_register_kvcache)
         VRAMManager.register('get_entry', self.get_entry)
         VRAMManager.register('batch_get_entry', self.batch_get_entry)
+        VRAMManager.register('get_ipc_mem_handle', self.get_ipc_mem_handle)
+        VRAMManager.register('register_segment_ipc_handle', self.register_segment_ipc_handle)
         VRAMManager.register('remove', self.remove)
         VRAMManager.register('get_stats', self.get_stats)
         VRAMManager.register('health_check', self.health_check)
@@ -167,6 +171,7 @@ class VRAMMetadataIPCServer:
         buffer_pointer: Optional[int] = None,
         segment_id: Optional[str] = None,
         resident_hostname: Optional[str] = None,
+        segment_offset: int = 0,
     ) -> bool:
         """
         Register KV cache by delegating to internal pool manager.
@@ -198,14 +203,16 @@ class VRAMMetadataIPCServer:
                     tensor_size=tensor_size,
                     buffer_pointer=buffer_pointer,
                     segment_id=segment_id,
-                    resident_hostname=resident_hostname
+                    resident_hostname=resident_hostname,
+                    segment_offset=segment_offset
                 )
                 
                 if success:
                     logger.info(f"Successfully registered KV cache via IPC -"
                                 f"Key: {cache_key.chunk_hash}, "
                                 f"GPU: {gpu_id}, "
-                                f"Tokens: {len(token_ids)}")
+                                f"Tokens: {len(token_ids)}, "
+                                f"Segment offset: {segment_offset} bytes")
                     return True
                 else:
                     logger.error("Registration failed in pool manager")
@@ -217,7 +224,7 @@ class VRAMMetadataIPCServer:
 
     def batch_register_kvcache(
         self,
-        entries_data: List[Tuple[Dict, List[int], int, tuple, str, int, Optional[int], Optional[str], Optional[str]]]
+        entries_data: List[Tuple[Dict, List[int], int, tuple, str, int, Optional[int], Optional[str], Optional[str], int]]
     ) -> List[bool]:
         """
         batch register KV cache to GPU VRAM pool metadata
@@ -225,7 +232,7 @@ class VRAMMetadataIPCServer:
         Args:
             entries_data: list of serialized entry data tuples
                 (key_dict, token_ids, gpu_id, tensor_shape, tensor_dtype_str, tensor_size, 
-                 buffer_pointer, segment_id, resident_hostname)
+                 buffer_pointer, segment_id, resident_hostname, segment_offset)
             
         Returns:
             list of bool indicating success for each entry
@@ -240,9 +247,9 @@ class VRAMMetadataIPCServer:
                 
                 for entry_data in entries_data:
                     try:
-                        # unpack entry data
+                        # unpack entry data - new format with segment_offset
                         (key_dict, token_ids, gpu_id, tensor_shape, tensor_dtype_str, 
-                         tensor_size, buffer_pointer, segment_id, resident_hostname) = entry_data
+                         tensor_size, buffer_pointer, segment_id, resident_hostname, segment_offset) = entry_data
                         
                         # Deserialize key and dtype
                         cache_key = self._deserialize_key(key_dict)
@@ -250,7 +257,7 @@ class VRAMMetadataIPCServer:
                         
                         batch_entries.append((
                             cache_key, token_ids, gpu_id, tensor_shape, dtype, 
-                            tensor_size, buffer_pointer, segment_id, resident_hostname
+                            tensor_size, buffer_pointer, segment_id, resident_hostname, segment_offset
                         ))
                         
                     except Exception as e:
@@ -321,6 +328,7 @@ class VRAMMetadataIPCServer:
                         "tensor_size": entry.tensor_size,
                         "buffer_pointer": entry.buffer_pointer,
                         "segment_id": entry.segment_id,
+                        "segment_offset": entry.segment_offset,
                         "resident_hostname": entry.resident_hostname,
                         # Add missing fields that client expects
                         "created_time": entry.created_time,
@@ -383,6 +391,7 @@ class VRAMMetadataIPCServer:
                             "tensor_size": entry.tensor_size,
                             "buffer_pointer": entry.buffer_pointer,
                             "segment_id": entry.segment_id,
+                            "segment_offset": entry.segment_offset,
                             "resident_hostname": entry.resident_hostname,
                             "created_time": entry.created_time,
                             "last_access_time": entry.last_access_time,
@@ -403,6 +412,58 @@ class VRAMMetadataIPCServer:
             except Exception as e:
                 logger.error(f"Batch get entry error: {e}")
                 return [None] * len(key_dicts)
+
+    def get_ipc_mem_handle(self, address_dict: Dict):
+        """Return pre-registered serialized cudaIpcMemHandle for a GPU memory address.
+
+        This method will only return a handle that was previously registered using
+        `register_segment_ipc_handle`. It will not attempt to compute or retrieve
+        a handle via CUDA at query time.
+
+        Args:
+            address_dict: Dictionary with 'address' key containing the GPU memory address
+                and optionally 'gpu_id' key for the GPU ID.
+                Example 1: {'address': 1234567890} - will search all GPUs
+                Example 2: {'address': 1234567890, 'gpu_id': 0} - will search specific GPU
+        
+        Returns tuple (handle_bytes, gpu_id, base_pointer, size) or None on failure.
+        """
+        with self.lock:
+            try:
+                # Direct address lookup
+                if 'address' not in address_dict:
+                    logger.error("Missing 'address' key in request")
+                    return None
+                    
+                buffer_ptr = int(address_dict['address'])
+                requested_gpu_id = address_dict.get('gpu_id')
+                
+                # Look for a registered segment IPC handle that covers this buffer pointer
+                for composite_key, info in self.segment_ipc_handles.items():
+                    # composite_key is (gpu_id, base_ptr)
+                    gpu_id, base_ptr = composite_key
+                    seg_base = int(base_ptr)
+                    seg_size = int(info.get('size', 0))
+                    
+                    # Check if this handle matches the requested GPU (if specified)
+                    if requested_gpu_id is not None and gpu_id != requested_gpu_id:
+                        continue
+                    
+                    # Check if the address is within this segment
+                    if buffer_ptr >= seg_base and buffer_ptr < seg_base + seg_size:
+                        logger.debug(f"Found pre-registered segment IPC handle for address {hex(buffer_ptr)} on GPU {gpu_id}: {info.get('segment_id')} @ {hex(seg_base)}")
+                        return (info.get('handle_bytes'), info.get('gpu_id'), seg_base, seg_size)
+                
+                logger.error(f"No pre-registered IPC handle found for address {hex(buffer_ptr)}" + 
+                             (f" on GPU {requested_gpu_id}" if requested_gpu_id is not None else "") + 
+                             "; returning None")
+                return None
+
+            except Exception as e:
+                logger.error(f"Failed to get IPC mem handle: {e}")
+                return None
+
+
 
     def remove(self, key_dict: Dict) -> bool:
         """Remove metadata entry by delegating to internal pool manager."""
@@ -459,6 +520,32 @@ class VRAMMetadataIPCServer:
         self.stop()
         return True
 
+    def register_segment_ipc_handle(self, segment_id: str, buffer_pointer: int, handle_bytes: bytes, gpu_id: int, size: int) -> bool:
+        """Register an IPC mem handle for a pre-allocated segment.
+
+        Stores the handle bytes keyed by a composite key (gpu_id, buffer_pointer) 
+        to avoid conflicts between different GPUs with the same address.
+        """
+        with self.lock:
+            try:
+                if not buffer_pointer or buffer_pointer == 0:
+                    logger.error("Invalid buffer_pointer for segment IPC registration")
+                    return False
+                # Create a composite key with GPU ID to avoid conflicts
+                composite_key = (gpu_id, int(buffer_pointer))
+                # Overwrite or set the mapping
+                self.segment_ipc_handles[composite_key] = {
+                    'segment_id': segment_id,
+                    'handle_bytes': handle_bytes,
+                    'gpu_id': gpu_id,
+                    'size': size,
+                    'registered_time': time.time()
+                }
+                logger.info(f"Registered segment IPC handle: {segment_id} @ GPU{gpu_id}:{hex(buffer_pointer)} (size={size})")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to register segment IPC handle: {e}")
+                return False
     def _deserialize_key(self, key_dict: Dict) -> CacheEngineKey:
         """Deserialize key dictionary to CacheEngineKey."""
         dtype = self._deserialize_dtype(key_dict.get('dtype', 'torch.float16'))
@@ -487,4 +574,3 @@ def start_vram_metadata_ipc_server(config=None):
     server = VRAMMetadataIPCServer(config)
     server.start()
     return server
-

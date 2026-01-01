@@ -12,7 +12,7 @@ import time
 from multiprocessing.managers import BaseManager
 import torch
 
-from lmcache.test.gpu_vram_pool_manager import GPUVRAMEntry
+from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMEntry
 from lmcache.logging import init_logger
 from lmcache.utils import CacheEngineKey
 
@@ -70,6 +70,8 @@ class VRAMMetadataIPCClient:
                 VRAMManager.register('batch_register_kvcache')
                 VRAMManager.register('get_entry')
                 VRAMManager.register('batch_get_entry')
+                VRAMManager.register('get_ipc_mem_handle')
+                VRAMManager.register('register_segment_ipc_handle')
                 VRAMManager.register('remove')
                 VRAMManager.register('get_stats')
                 VRAMManager.register('health_check')
@@ -176,6 +178,7 @@ class VRAMMetadataIPCClient:
         buffer_pointer: Optional[int] = None,
         segment_id: Optional[str] = None,
         resident_hostname: Optional[str] = None,
+        segment_offset: int = 0,
     ) -> bool:
         """
         Register KV cache by delegating to VRAM metadata IPC server.
@@ -200,13 +203,15 @@ class VRAMMetadataIPCClient:
                     tensor_size,
                     buffer_pointer,
                     segment_id,
-                    resident_hostname
+                    resident_hostname,
+                    segment_offset
                 )
                 
                 if success:
                     logger.info(f"Successfully registered KV cache via IPC - "
                                 f"Key: {cache_key.chunk_hash}, "
-                                f"GPU: {gpu_id}")
+                                f"GPU: {gpu_id}, "
+                                f"Segment offset: {segment_offset}")
                     return True
                 else:
                     logger.error("Registration failed via IPC")
@@ -220,7 +225,7 @@ class VRAMMetadataIPCClient:
 
     def batch_register_kvcache(
         self,
-        entries_data: List[Tuple[CacheEngineKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str]]]
+        entries_data: List[Tuple[CacheEngineKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str], int]]
     ) -> List[bool]:
         """
         batch register KV cache to GPU VRAM pool metadata
@@ -228,7 +233,7 @@ class VRAMMetadataIPCClient:
         Args:
             entries_data: list of entry data tuples:
                 (cache_key, token_ids, gpu_id, tensor_shape, tensor_dtype, tensor_size, 
-                 buffer_pointer, segment_id, resident_hostname)
+                 buffer_pointer, segment_id, resident_hostname, segment_offset)
             
         Returns:
             list of registration results for each entry, True indicates success, False indicates failure
@@ -244,7 +249,7 @@ class VRAMMetadataIPCClient:
                 for entry_data in entries_data:
                     try:
                         (cache_key, token_ids, gpu_id, tensor_shape, tensor_dtype, 
-                         tensor_size, buffer_pointer, segment_id, resident_hostname) = entry_data
+                         tensor_size, buffer_pointer, segment_id, resident_hostname, segment_offset) = entry_data
                         
                         # Serialize key and dtype for IPC transmission
                         key_dict = self._serialize_key(cache_key)
@@ -252,7 +257,7 @@ class VRAMMetadataIPCClient:
                         
                         batch_entries.append((
                             key_dict, token_ids, gpu_id, tensor_shape, tensor_dtype_str, 
-                            tensor_size, buffer_pointer, segment_id, resident_hostname
+                            tensor_size, buffer_pointer, segment_id, resident_hostname, segment_offset
                         ))
                         
                     except Exception as e:
@@ -349,6 +354,73 @@ class VRAMMetadataIPCClient:
                 self.failed_requests += 1
                 logger.error(f"IPC get_entry failed: {e}")
                 return None
+
+    def get_ipc_mem_handle(self, address: int, gpu_id: Optional[int] = None) -> Optional[Tuple[bytes, int, int, int]]:
+        """Request cudaIpcMemHandle bytes for GPU memory address from IPC server.
+
+        Args:
+            address: GPU memory address
+            gpu_id: Optional GPU ID to specify which GPU the address belongs to.
+                   If not provided, will search all GPUs (may cause conflicts if same address exists on multiple GPUs).
+        
+        Returns (handle_bytes, gpu_id, base_pointer, size) or None on failure.
+        """
+        with self.lock:
+            self.total_requests += 1
+            try:
+                self._ensure_connection()
+                address_dict = {'address': address}
+                if gpu_id is not None:
+                    address_dict['gpu_id'] = gpu_id
+                res_proxy = self.server_proxy.get_ipc_mem_handle(address_dict)
+                if hasattr(res_proxy, '_getvalue'):
+                    res = res_proxy._getvalue()
+                else:
+                    res = res_proxy
+                if res:
+                    return res
+                else:
+                    return None
+            except Exception as e:
+                self.failed_requests += 1
+                logger.error(f"IPC get_ipc_mem_handle failed: {e}")
+                return None
+
+
+    def register_segment_ipc_handle(self, 
+                                    segment_id: str, 
+                                    buffer_pointer: int, 
+                                    handle_bytes: bytes, 
+                                    gpu_id: int, 
+                                    size: int) -> bool:
+        """Register an IPC mem handle for a pre-allocated segment on this host.
+
+        Returns True on success, False otherwise.
+        """
+        with self.lock:
+            self.total_requests += 1
+            try:
+                self._ensure_connection()
+                res_proxy = self.server_proxy.register_segment_ipc_handle(segment_id, 
+                                                                          buffer_pointer, 
+                                                                          handle_bytes, 
+                                                                          gpu_id, 
+                                                                          size)
+                if hasattr(res_proxy, '_getvalue'):
+                    res = res_proxy._getvalue()
+                else:
+                    res = res_proxy
+                if res:
+                    logger.info(f"Registered segment IPC handle via IPC: {segment_id} @ {hex(buffer_pointer)}")
+                    return True
+                else:
+                    self.failed_requests += 1
+                    logger.error("Server failed to register segment IPC handle")
+                    return False
+            except Exception as e:
+                self.failed_requests += 1
+                logger.error(f"IPC register_segment_ipc_handle failed: {e}")
+                return False
 
     def batch_get_entry(self, keys: List[CacheEngineKey]) -> List[Optional[object]]:
         """

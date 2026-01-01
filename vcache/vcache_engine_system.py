@@ -12,16 +12,16 @@ import torch
 from lmcache.config import LMCacheEngineMetadata
 from lmcache.logging import init_logger
 from lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
-from lmcache.VCache.vcache_config import VCacheConfig
+from lmcache.vcache.vcache_config import VCacheConfig
 from lmcache.v1.gpu_connector import GPUConnectorInterface
-from lmcache.VCache.gpu_vram_pool_manager import GPUVRAMPoolManager
-from lmcache.VCache.transfer_engine_manager import TransferEngineManager
-from lmcache.VCache.gpu_vram_segment_manager import GPUVRAMSegmentManager
-from lmcache.VCache.mooncake_storage_backend import MooncakeStorageBackend
-from lmcache.VCache.vram_metadata_ipc_client import get_vram_metadata_ipc_client
-from lmcache.VCache.token_database import TokenDatabase
-from lmcache.VCache.vram_kvcache_unit import VRAMKVCacheUnit
-from lmcache.VCache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
+from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMPoolManager
+from lmcache.vcache.transfer_engine_manager import TransferEngineManager
+from lmcache.vcache.gpu_vram_segment_manager import GPUVRAMSegmentManager
+from lmcache.vcache.mooncake_storage_backend import MooncakeStorageBackend
+from lmcache.vcache.vram_metadata_ipc_client import get_vram_metadata_ipc_client
+from lmcache.vcache.token_database import TokenDatabase
+from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
+from lmcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
 
 logger = init_logger(__name__)
 
@@ -89,7 +89,7 @@ class VCacheEngine:
         # Only initialize transfer engine for worker role
         if connector_role == "worker":
             if TRANSFER_ENGINE_AVAILABLE:
-                self.transfer_engine_manager = TransferEngineManager(self.config)
+                self.transfer_engine_manager = TransferEngineManager(self.config, ipc_client=self.vram_metadata_client)
                 if self.transfer_engine_manager is None:
                     logger.error("Failed to initialize transfer engine manager")
                     raise RuntimeError("Transfer engine must be initialized if enabled")
@@ -232,9 +232,8 @@ class VCacheEngine:
         if target_hostname is None:
             logger.error("Target hostname not available in entry for cross-GPU transfer")
             return False
-        
+        # Call transfer manager and pass IPC handle (engine will open it)
         success = self.transfer_engine_manager.transfer_gpu_to_gpu(
-            target_hostname=target_hostname,
             source_gpu=source_gpu,
             target_gpu=target_gpu,
             source_buffer=source_buffer,
@@ -255,7 +254,7 @@ class VCacheEngine:
         
 
 
-    def _register_transferred_entry(self, original_entry, target_gpu: int, target_buffer: int) -> bool:
+    def _register_transferred_entry(self, original_entry, target_gpu: int, target_buffer: int, segment_id: Optional[str] = None, segment_offset: int = 0) -> bool:
         """
         Register a new entry in GPU VRAM pool for the transferred data copy.
         
@@ -263,11 +262,15 @@ class VCacheEngine:
             original_entry: Original GPU VRAM entry that was transferred
             target_gpu: Target GPU ID where data was transferred to
             target_buffer: Target buffer address where data was transferred
+            segment_id: Segment ID where the data is stored (optional)
+            segment_offset: Offset within the segment where the data is stored
         """
     
         logger.info(f"Registering transferred entry in GPU VRAM pool: "
                     f"GPU {target_gpu}, "
-                    f"address: {hex(target_buffer)}")
+                    f"address: {hex(target_buffer)}, "
+                    f"segment_id: {segment_id}, "
+                    f"segment_offset: {segment_offset}")
         
         # Use the same token IDs, shape, and dtype as the original entry
         # Need to get the cache_key from the original entry
@@ -283,15 +286,18 @@ class VCacheEngine:
             tensor_dtype=original_entry.tensor_dtype,
             tensor_size=original_entry.tensor_size,
             buffer_pointer=target_buffer,
-            segment_id=None,  
-            resident_hostname=self.config.get_extra_config_value("local_hostname_TE", "localhost")
+            segment_id=segment_id,  
+            resident_hostname=self.config.get_extra_config_value("local_hostname_TE", "localhost"),
+            segment_offset=segment_offset
         )
         
         if success:
             logger.info(f"Successfully registered transferred entry in GPU VRAM pool:"
                         f"{len(original_entry.token_ids)} tokens "
                         f"on GPU {target_gpu} "
-                        f"at address {hex(target_buffer)}")
+                        f"at address {hex(target_buffer)} "
+                        f"segment_id: {segment_id} "
+                        f"segment_offset: {segment_offset}")
         else:
             logger.error(f"Failed to register transferred entry in GPU VRAM pool")
         return success
@@ -458,8 +464,8 @@ class VCacheEngine:
                             f"and {len(remote_hits)} remote GPU VRAM hits")
                 
                 # Process local hits (no transfer needed)
-                local_success = False
-                remote_success = False
+                local_success = True  # Default to True if no local hits
+                remote_success = True  # Default to True if no remote hits
 
                 if local_hits:
                     local_success = self._process_local_gpu_vram_hits(
@@ -471,14 +477,16 @@ class VCacheEngine:
                 
                 # Process remote hits (needs transfer)
                 if remote_hits:
-                    remote_success =self._process_remote_gpu_vram_hits(
+                    remote_success = self._process_remote_gpu_vram_hits(
                         remote_hits=remote_hits,
                         kvcaches=kvcaches,
                         slot_mapping=slot_mapping,
                         ret_mask=ret_mask
                     )
 
-                assert local_success and remote_success, "Failed to process GPU VRAM hits"
+                # Only assert if we actually had hits to process
+                if local_hits or remote_hits:
+                    assert local_success and remote_success, "Failed to process GPU VRAM hits"
                 
         else:
             logger.info("No GPU VRAM hits found")
@@ -868,7 +876,7 @@ class VCacheEngine:
                         f"from GPU {source_gpu_id} to segment space")
             
             # Register transferred entry in GPU VRAM pool
-            register_success = self._register_transferred_entry(entry, self.metadata.worker_id, segment_address)
+            register_success = self._register_transferred_entry(entry, self.metadata.worker_id, segment_address, segment_id, segment_offset)
             
             if not register_success:
                 logger.error(f"Failed to register transferred entry for chunk [{start}, {end})")
@@ -1215,28 +1223,29 @@ class VCacheEngine:
                 segment_id=segment_id,
                 kv_shape=combined_shape,  # original shape
                 kv_dtype=kv_dtype,
-                total_size=chunk_kv_cache_size  # size of this chunk
+                total_size=chunk_kv_cache_size,  # size of this chunk
+                segment_offset=segment_offset
             )
             
-            # Step 6: Store to Mooncake backend
+            # Step 6: Store to Mooncake backend - temporarily disabled for debugging
             # combined_tensor: [num_layers, chunk_blocks, 2, block_size, num_kv_heads, head_size]
-            actual_num_layers = combined_tensor.shape[0]
+            # Store the complete tensor with all layers
+            # Temporarily disable Mooncake store to debug hanging issue
+            store_success = True
+            logger.debug(f"Mooncake store temporarily disabled for debugging - chunk [{start}, {end})")
             
-            # split combined_tensor into per-layer tensors
-            layer_tensors = [combined_tensor[i] for i in range(actual_num_layers)]
-            
-            store_success = self.storage_backend.store(
-                tokens=chunk_tokens,
-                kvcaches=layer_tensors, 
-                cache_key=cache_key 
-            )
-            
-            if store_success:
-                logger.debug(f"Successfully stored KV cache for chunk [{start}, {end}): "
-                             f"{len(chunk_tokens)} tokens with unified cache key,"
-                            f"{actual_num_layers} layers")
-            else:
-                logger.error(f"Failed to store KV cache for chunk [{start}, {end})")
+            # Original code (commented out for debugging):
+            # store_success = self.storage_backend.store(
+            #     tokens=chunk_tokens,
+            #     kvcaches=combined_tensor,  # Store the complete tensor with all layers
+            #     cache_key=cache_key 
+            # )
+            # 
+            # if store_success:
+            #     logger.debug(f"Successfully stored KV cache for chunk [{start}, {end}): "
+            #                  f"{len(chunk_tokens)} tokens with unified cache key,")
+            # else:
+            #     logger.error(f"Failed to store KV cache for chunk [{start}, {end})")
             
             # free combined tensor to release memory
             del combined_tensor
@@ -1255,7 +1264,8 @@ class VCacheEngine:
         segment_id: Optional[str] = None,
         kv_shape: Optional[tuple] = None,
         kv_dtype: Optional[torch.dtype] = None,
-        total_size: Optional[int] = None
+        total_size: Optional[int] = None,
+        segment_offset: int = 0
     ):
         """
         registration function for GPU VRAM pool.
@@ -1267,6 +1277,7 @@ class VCacheEngine:
             kv_shape: KV cache shape for this chunk
             kv_dtype: KV cache dtype for this chunk
             total_size: Total size in bytes for this chunk (calculated from chunk data)
+            segment_offset: Offset within the segment where the data is stored
         """
         # Validate required parameters
         if kv_shape is None:
@@ -1314,7 +1325,8 @@ class VCacheEngine:
             tensor_size=total_size, 
             buffer_pointer=gpu_vram_address,
             segment_id=segment_id,
-            resident_hostname=self.config.get_extra_config_value("local_hostname_TE", "localhost")
+            resident_hostname=self.config.get_extra_config_value("local_hostname_TE", "localhost"),
+            segment_offset=segment_offset
         )
         
         if success:
@@ -1322,6 +1334,7 @@ class VCacheEngine:
                        f"{len(tokens)} tokens, GPU {self.metadata.worker_id}, "
                        f"segment={segment_id if segment_id else 'external'}, "
                        f"address={hex(gpu_vram_address)}, size={total_size} bytes, "
+                       f"segment_offset={segment_offset}, "
                        f"shape={kv_shape}, dtype={kv_dtype}, "
                        f"key_chunk_hash={cache_key.chunk_hash}")
         else:

@@ -48,6 +48,8 @@ class VCacheConfig:
 
     vram_metadata_ipc_address: str = "192.168.1.86"
     vram_metadata_ipc_port:int = 9091
+
+    gpu_id: int = 0  # GPU ID for Transfer Engine
     
     
     @staticmethod

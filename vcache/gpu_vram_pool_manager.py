@@ -35,6 +35,7 @@ class GPUVRAMEntry:
     prefetch_priority: int = 0  # Higher value = higher prefetch priority
     # Segment tracking
     segment_id: Optional[str] = None  # Associated GPU VRAM segment
+    segment_offset: int = 0  # Offset within the segment (in bytes)
 
 
 class GPUVRAMPoolManager:
@@ -134,9 +135,7 @@ class GPUVRAMPoolManager:
                     logger.debug(f"Checking GPU VRAM for continuous chunk [{start}, {end}): "
                                  f"{chunk_length} tokens,"
                                  f"key: {chunk_cache_key}, "
-                                 f"chunk_hash: {chunk_cache_key.chunk_hash 
-                                                if hasattr(chunk_cache_key, 
-                                                           'chunk_hash') else 'N/A'}")
+                                 f"chunk_hash: {chunk_cache_key.chunk_hash if hasattr(chunk_cache_key, 'chunk_hash') else 'N/A'}")
                     
                     # Check if this chunk exists in metadata
                     if chunk_cache_key in self.metadata:
@@ -224,6 +223,7 @@ class GPUVRAMPoolManager:
         buffer_pointer: Optional[int] = None,
         segment_id: Optional[str] = None,
         resident_hostname: Optional[str] = None,
+        segment_offset: int = 0,
     ) -> bool:
         """
         Register a new KV cache in GPU VRAM pool metadata.
@@ -238,6 +238,7 @@ class GPUVRAMPoolManager:
             tensor_size: Size of the KV cache tensor in bytes
             buffer_pointer: Optional GPU buffer pointer address
             segment_id: Optional segment ID if the cache is stored in a segment
+            segment_offset: Offset within the segment (in bytes)
 
         Returns:
             True if registration successful, False otherwise
@@ -263,7 +264,8 @@ class GPUVRAMPoolManager:
                 access_count=1,
                 buffer_pointer=buffer_pointer,
                 resident_hostname=resident_hostname,
-                segment_id=segment_id
+                segment_id=segment_id,
+                segment_offset=segment_offset
             )
             
             # store metadata
@@ -284,6 +286,7 @@ class GPUVRAMPoolManager:
                 f"Token length: {len(token_ids)}, "
                 f"GPU: {gpu_id}, "
                 f"Segment: {segment_id if segment_id else 'external'}, "
+                f"Segment offset: {segment_offset} bytes, "
                 f"Size: {tensor_size} bytes"
             )
             return True
@@ -298,7 +301,8 @@ class GPUVRAMPoolManager:
                                  int, 
                                  Optional[int], 
                                  Optional[str], 
-                                 Optional[str]]]
+                                 Optional[str],
+                                 int]]  # New format with segment_offset as required parameter
     ) -> List[bool]:
         """
         batch register KV cache to GPU VRAM pool metadata
@@ -306,7 +310,7 @@ class GPUVRAMPoolManager:
         Args:
             entries_data: each entry contains:
                 (cache_key, token_ids, gpu_id, tensor_shape, tensor_dtype, tensor_size, 
-                 buffer_pointer, segment_id, resident_hostname)
+                 buffer_pointer, segment_id, resident_hostname, segment_offset)
             
         Returns:
             list of bool indicating success/failure for each entry
@@ -317,9 +321,9 @@ class GPUVRAMPoolManager:
             
             for entry_data in entries_data:
                 try:
-                    # unpack entry data
+                    # unpack entry data - new format with segment_offset
                     (cache_key, token_ids, gpu_id, tensor_shape, tensor_dtype, 
-                     tensor_size, buffer_pointer, segment_id, resident_hostname) = entry_data
+                     tensor_size, buffer_pointer, segment_id, resident_hostname, segment_offset) = entry_data
                     
                     # check metadata limit
                     if self.total_entries >= self.max_metadata_size:
@@ -340,7 +344,8 @@ class GPUVRAMPoolManager:
                         access_count=1,
                         buffer_pointer=buffer_pointer,
                         resident_hostname=resident_hostname,
-                        segment_id=segment_id
+                        segment_id=segment_id,
+                        segment_offset=segment_offset
                     )
                     
                     # store metadata
@@ -358,6 +363,7 @@ class GPUVRAMPoolManager:
                         f"Key chunk_hash: {cache_key.chunk_hash}, "
                         f"Token length: {len(token_ids)}, "
                         f"GPU: {gpu_id}, "
+                        f"Segment offset: {segment_offset} bytes, "
                         f"Size: {tensor_size} bytes"
                     )
                     

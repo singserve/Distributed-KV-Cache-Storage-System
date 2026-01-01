@@ -16,7 +16,7 @@ Simple script to start the VRAM metadata IPC server only.
 """
 def create_config() -> VCacheConfig:
     """Create configuration for a specific GPU"""
-    config_file = f"test_system_config_gpu0.yaml"
+    config_file = f"vcache_config_gpu0.yaml"
     print(f"Loading configuration from {config_file}")
     return VCacheConfig.from_file(config_file)
 
