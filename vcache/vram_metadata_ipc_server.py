@@ -417,14 +417,12 @@ class VRAMMetadataIPCServer:
         """Return pre-registered serialized cudaIpcMemHandle for a GPU memory address.
 
         This method will only return a handle that was previously registered using
-        `register_segment_ipc_handle`. It will not attempt to compute or retrieve
-        a handle via CUDA at query time.
+        `register_segment_ipc_handle`. 
 
         Args:
             address_dict: Dictionary with 'address' key containing the GPU memory address
                 and optionally 'gpu_id' key for the GPU ID.
-                Example 1: {'address': 1234567890} - will search all GPUs
-                Example 2: {'address': 1234567890, 'gpu_id': 0} - will search specific GPU
+                Example: {'address': 1234567890, 'gpu_id': 0}
         
         Returns tuple (handle_bytes, gpu_id, base_pointer, size) or None on failure.
         """
@@ -451,7 +449,10 @@ class VRAMMetadataIPCServer:
                     
                     # Check if the address is within this segment
                     if buffer_ptr >= seg_base and buffer_ptr < seg_base + seg_size:
-                        logger.debug(f"Found pre-registered segment IPC handle for address {hex(buffer_ptr)} on GPU {gpu_id}: {info.get('segment_id')} @ {hex(seg_base)}")
+                        logger.debug(f"Found pre-registered segment IPC handle "
+                                     f"for address {hex(buffer_ptr)} "
+                                     f"on GPU {gpu_id}: {info.get('segment_id')} "
+                                     f"@ {hex(seg_base)}")
                         return (info.get('handle_bytes'), info.get('gpu_id'), seg_base, seg_size)
                 
                 logger.error(f"No pre-registered IPC handle found for address {hex(buffer_ptr)}" + 
@@ -520,7 +521,12 @@ class VRAMMetadataIPCServer:
         self.stop()
         return True
 
-    def register_segment_ipc_handle(self, segment_id: str, buffer_pointer: int, handle_bytes: bytes, gpu_id: int, size: int) -> bool:
+    def register_segment_ipc_handle(self, 
+                                    segment_id: str, 
+                                    buffer_pointer: int, 
+                                    handle_bytes: bytes, 
+                                    gpu_id: int, 
+                                    size: int) -> bool:
         """Register an IPC mem handle for a pre-allocated segment.
 
         Stores the handle bytes keyed by a composite key (gpu_id, buffer_pointer) 
@@ -541,11 +547,14 @@ class VRAMMetadataIPCServer:
                     'size': size,
                     'registered_time': time.time()
                 }
-                logger.info(f"Registered segment IPC handle: {segment_id} @ GPU{gpu_id}:{hex(buffer_pointer)} (size={size})")
+                logger.info(f"Registered segment IPC handle: {segment_id} "
+                            f"@ GPU{gpu_id}:{hex(buffer_pointer)} "
+                            f"(size={size})")
                 return True
             except Exception as e:
                 logger.error(f"Failed to register segment IPC handle: {e}")
                 return False
+            
     def _deserialize_key(self, key_dict: Dict) -> CacheEngineKey:
         """Deserialize key dictionary to CacheEngineKey."""
         dtype = self._deserialize_dtype(key_dict.get('dtype', 'torch.float16'))

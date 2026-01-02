@@ -67,7 +67,9 @@ class TransferEngineManager:
                             target_gpu: int, 
                             source_buffer, 
                             target_buffer, 
-                            size: int) -> bool:
+                            size: int,
+                            src_offset: int = 0,
+                            dst_offset: int = 0) -> bool:
         """Transfer data between GPUs using NVLINK transfer engine.
 
         ipc_handle: when transferring from a remote process allocation,
@@ -105,7 +107,9 @@ class TransferEngineManager:
                 source_address=source_address,
                 target_address=target_address,
                 size=size,
-                ipc_handle=ipc_handle
+                ipc_handle=ipc_handle,
+                src_offset=src_offset,
+                dst_offset=dst_offset
             )
             
             if success:

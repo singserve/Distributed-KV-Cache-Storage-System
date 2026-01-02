@@ -360,8 +360,7 @@ class VRAMMetadataIPCClient:
 
         Args:
             address: GPU memory address
-            gpu_id: Optional GPU ID to specify which GPU the address belongs to.
-                   If not provided, will search all GPUs (may cause conflicts if same address exists on multiple GPUs).
+            gpu_id: GPU ID to specify which GPU the address belongs to.
         
         Returns (handle_bytes, gpu_id, base_pointer, size) or None on failure.
         """
@@ -411,7 +410,8 @@ class VRAMMetadataIPCClient:
                 else:
                     res = res_proxy
                 if res:
-                    logger.info(f"Registered segment IPC handle via IPC: {segment_id} @ {hex(buffer_pointer)}")
+                    logger.info(f"Registered segment IPC handle via IPC: {segment_id} "
+                                f"@ {hex(buffer_pointer)}")
                     return True
                 else:
                     self.failed_requests += 1

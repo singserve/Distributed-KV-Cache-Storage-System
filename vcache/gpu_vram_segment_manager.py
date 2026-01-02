@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import threading
 import time
 import torch
+import ctypes
 
 from lmcache.logging import init_logger
 from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
@@ -623,38 +624,36 @@ class GPUVRAMSegmentManager:
                         f"segment_id: {segment_id}")
             
             # Register IPC handle for the segment if IPC client is available
-            if self.vram_metadata_client:
-                try:
-                    # Get IPC handle for the allocated GPU memory
-                    import ctypes
-                    libcudart = ctypes.CDLL("libcudart.so")
-                    cudaIpcGetMemHandle = libcudart.cudaIpcGetMemHandle
-                    cudaIpcGetMemHandle.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-                    cudaIpcGetMemHandle.restype = ctypes.c_int
-                    
-                    IPC_HANDLE_SIZE = 64
-                    handle_buf = ctypes.create_string_buffer(IPC_HANDLE_SIZE)
-                    rc = cudaIpcGetMemHandle(ctypes.cast(handle_buf, ctypes.c_void_p), ctypes.c_void_p(base_address))
-                    
-                    if rc == 0:
-                        handle_bytes = handle_buf.raw
-                        # Register the IPC handle with the metadata server
-                        success = self.vram_metadata_client.register_segment_ipc_handle(
-                            segment_id=segment_id,
-                            buffer_pointer=base_address,
-                            handle_bytes=handle_bytes,
-                            gpu_id=self.gpu_id,
-                            size=segment_size_bytes
-                        )
-                        
-                        if success:
-                            logger.info(f"Registered IPC handle for segment {segment_id} via IPC client")
-                        else:
-                            logger.warning(f"Failed to register IPC handle for segment {segment_id} via IPC client")
-                    else:
-                        logger.warning(f"Failed to get IPC handle for segment {segment_id}: CUDA error code {rc}")
-                except Exception as e:
-                    logger.warning(f"Failed to register IPC handle for segment {segment_id}: {e}")
+            assert self.vram_metadata_client is not None
+
+            # Get IPC handle for the allocated GPU memory
+            libcudart = ctypes.CDLL("libcudart.so")
+            cudaIpcGetMemHandle = libcudart.cudaIpcGetMemHandle
+            cudaIpcGetMemHandle.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            cudaIpcGetMemHandle.restype = ctypes.c_int
+            
+            IPC_HANDLE_SIZE = 64
+            handle_buf = ctypes.create_string_buffer(IPC_HANDLE_SIZE)
+            rc = cudaIpcGetMemHandle(ctypes.cast(handle_buf, ctypes.c_void_p), ctypes.c_void_p(base_address))
+            
+            if rc == 0:
+                handle_bytes = handle_buf.raw
+                # Register the IPC handle with the metadata server
+                success = self.vram_metadata_client.register_segment_ipc_handle(
+                    segment_id=segment_id,
+                    buffer_pointer=base_address,
+                    handle_bytes=handle_bytes,
+                    gpu_id=self.gpu_id,
+                    size=segment_size_bytes
+                )
+                
+                if success:
+                    logger.debug(f"Registered IPC handle for segment {segment_id} via IPC client")
+                else:
+                    logger.error(f"Failed to register IPC handle for segment {segment_id} via IPC client")
+            else:
+                logger.error(f"Failed to get IPC handle for segment {segment_id}: CUDA error code {rc}")
+
             
             # NVLINK transfer engine doesn't need segment registration
             # The engine can directly transfer between GPU memory addresses

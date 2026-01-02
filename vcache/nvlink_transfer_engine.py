@@ -38,12 +38,8 @@ class DistributedNVLINKTransferEngine:
     Distributed NVLINK Transfer Engine for direct GPU-to-GPU data transfer.
     
     Each VCacheEngine instance has its own transfer engine that can:
-    1. Push data from its own GPU to other GPUs
-    2. Pull data from other GPUs to its own GPU
-    3. Manage local transfer queues and statistics
-    4. Coordinate with segment manager for address resolution
-    
-    This is a pure distributed architecture where each engine controls its own transfers.
+    1. Perform direct GPU-to-GPU transfers using NVLINK
+    2. Manage local transfer queues and statistics
     """
     
     def __init__(self, config, gpu_id: int, segment_manager=None, ipc_client=None):
@@ -311,7 +307,7 @@ class DistributedNVLINKTransferEngine:
         """Perform direct GPU-to-GPU transfer using NVLINK with low-level CUDA APIs.
 
         Args:
-            ipc_handle: Optional serialized cudaIpcMemHandle if source allocation is remote (not yet mapped here)
+            ipc_handle: serialized cudaIpcMemHandle if source allocation is remote
         """
         if not self.cuda_available:
             logger.error("CUDA not available for direct transfer")
@@ -320,30 +316,24 @@ class DistributedNVLINKTransferEngine:
         original_device = torch.cuda.current_device()
         
         try:
-            # If an IPC handle is provided, log it (actual mapping not implemented here)
-            if ipc_handle is not None:
-                logger.debug("IPC handle provided to _perform_direct_transfer")
-
             device_count = torch.cuda.device_count()
             if source_gpu >= device_count or target_gpu >= device_count:
-                logger.error(f"Invalid GPU IDs: source_gpu={source_gpu}, target_gpu={target_gpu}")
-                return False
-            
-            if size <= 0 or size > 1024 * 1024 * 1024:  # 1GB max
-                logger.error(f"Invalid transfer size: {size} bytes")
+                logger.error(f"Invalid GPU IDs: source_gpu={source_gpu}, "
+                             f"target_gpu={target_gpu}")
                 return False
 
-            # Allow source_address==0 when using an IPC handle (remote buffer); target must be a valid local pointer
-            if target_address == 0 or (source_address == 0 and ipc_handle is None):
-                logger.error(f"Invalid memory address: source={hex(source_address)}, target={hex(target_address)}; "
-                             f"note: source may be 0 if ipc_handle is provided")
+            # Allow one address to be zero if ipc_handle is provided
+            if (target_address == 0 and ipc_handle is None) or \
+               (source_address == 0 and ipc_handle is None):
+                logger.error(f"Invalid memory address; "
+                             f"note: address may be 0 if ipc_handle is provided")
                 return False
             
             can_access = torch.cuda.can_device_access_peer(source_gpu, target_gpu)
-            logger.debug(f"Peer access from GPU {source_gpu} to GPU {target_gpu}: {can_access}")
             
             if not can_access:
-                logger.error(f"Peer access not enabled from GPU {source_gpu} to GPU {target_gpu}")
+                logger.error(f"Peer access not enabled "
+                             f"from GPU {source_gpu} to GPU {target_gpu}")
                 return False
             
             torch.cuda.set_device(source_gpu)
@@ -390,7 +380,7 @@ class DistributedNVLINKTransferEngine:
             # Stream pointer
             stream_ptr = ctypes.c_void_p(stream.cuda_stream)
 
-            # Call native helper (must be available)
+            # Call native helper
             res = perform_direct_transfer_native(
                     ctypes.c_int(source_gpu),
                     ctypes.c_ulonglong(int(source_address)),
@@ -424,8 +414,7 @@ class DistributedNVLINKTransferEngine:
                         f"size={size} bytes ({size/1024/1024:.2f} MB)")
             return True
 
-
-            
+       
         except Exception as e:
             logger.error(f"Error in direct transfer: {e}", exc_info=True)
             return False
@@ -490,6 +479,9 @@ class DistributedNVLINKTransferEngine:
             source_address: Source GPU memory address
             target_address: Target GPU memory address
             size: Size to transfer in bytes
+            ipc_handle : Optional serialized cudaIpcMemHandle if one address is remote
+            src_offset: Offset into source buffer (bytes)
+            dst_offset: Offset into destination buffer (bytes)
             
         Returns:
             Transfer request ID
@@ -500,7 +492,7 @@ class DistributedNVLINKTransferEngine:
         if size <= 0:
             raise ValueError(f"Invalid transfer size: {size}")
         
-        # Generate unique request ID (using atomic counter for uniqueness)
+        # Generate unique request ID
         with self.lock:
             # Use a counter for unique IDs instead of queue length
             if not hasattr(self, '_transfer_counter'):
@@ -551,12 +543,14 @@ class DistributedNVLINKTransferEngine:
             source_address: Source GPU memory address
             target_address: Target GPU memory address
             size: Size to transfer in bytes
-            ipc_handle: Optional serialized cudaIpcMemHandle if source allocation is remote
-            
+            ipc_handle: Optional serialized cudaIpcMemHandle if one address is remote
+            src_offset: Offset into source buffer (bytes)
+            dst_offset: Offset into destination buffer (bytes)
+
         Returns:
             True if transfer successful, False otherwise
         """
-        # Submit transfer (propagate ipc_handle to the worker request)
+        # Submit transfer
         request_id = self.submit_transfer(
             source_gpu=source_gpu,
             target_gpu=target_gpu,
@@ -733,6 +727,7 @@ class DistributedNVLINKTransferEngine:
             
             return stats
     
+    # need modification here
     def batch_transfer(self, 
                       source_gpu: int,
                       target_gpu: int,

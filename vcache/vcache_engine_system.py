@@ -205,22 +205,26 @@ class VCacheEngine:
             logger.error(f"Failed to get source buffer address from entry for GPU {source_gpu}")
             return False
         
+        # Get source offset from entry if available
+        src_offset = entry.segment_offset if hasattr(entry, 'segment_offset') else 0
+        
         # If target_buffer is not provided, allocate one using local segment manager
+        target_offset = 0
         if target_buffer is None:
             logger.info("No target buffer provided, allocating using local segment manager")
             if self.segment_manager is not None:
-                segment_id, offset = self.segment_manager.allocate_in_segment(entry.tensor_size)
-                if not segment_id or not offset:
+                segment_id, target_offset = self.segment_manager.allocate_in_segment(entry.tensor_size)
+                if not segment_id or target_offset is None:
                     logger.error(f"Failed to allocate segment space "
                                  f"on GPU {target_gpu} "
                                  f"for {entry.tensor_size} bytes")
                     return False
                 
                 # Calculate buffer pointer (base address + offset)
-                target_buffer = self.segment_manager.get_buffer_address(segment_id, offset)
+                target_buffer = self.segment_manager.get_buffer_address(segment_id, target_offset)
                 logger.info(f"Allocated target buffer: {entry.tensor_size} bytes "
                             f"at address {hex(target_buffer)}"
-                            f"in segment {segment_id}")
+                            f"in segment {segment_id}, offset: {target_offset}")
             else:
                 logger.error("Segment manager not available for buffer allocation")
                 return False
@@ -232,19 +236,23 @@ class VCacheEngine:
         if target_hostname is None:
             logger.error("Target hostname not available in entry for cross-GPU transfer")
             return False
-        # Call transfer manager and pass IPC handle (engine will open it)
+        
+        # Call transfer manager with correct offset parameters
         success = self.transfer_engine_manager.transfer_gpu_to_gpu(
             source_gpu=source_gpu,
             target_gpu=target_gpu,
             source_buffer=source_buffer,
             target_buffer=target_buffer,
-            size=entry.tensor_size
+            size=entry.tensor_size,
+            src_offset=src_offset,
+            dst_offset=target_offset
         )
                 
         if success:
             logger.info(f"Cross-GPU transfer completed: "
                         f"GPU {source_gpu} -> GPU {target_gpu}, "
-                        f"size: {entry.tensor_size} bytes")
+                        f"size: {entry.tensor_size} bytes, "
+                        f"src_offset: {src_offset}, dst_offset: {target_offset}")
             # Note: Registration of transferred entry is now handled by the caller
         else:
             logger.error(f"Cross-GPU transfer failed: "
