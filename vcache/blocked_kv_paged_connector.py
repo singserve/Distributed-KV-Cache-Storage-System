@@ -7,7 +7,7 @@ from typing import List, Optional, Union
 import torch
 
 
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.v1.gpu_connector import GPUConnectorInterface
 from lmcache.v1.memory_management import MemoryObj
@@ -358,7 +358,8 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             max_slot = slot_mapping_slice.max().item()
             if max_slot >= self.page_buffer_size:
                 raise ValueError(
-                    f"slot_mapping out of bound: max_slot={max_slot} >= page_buffer_size={self.page_buffer_size}"
+                    f"slot_mapping out of bound: "
+                    f"max_slot={max_slot} >= page_buffer_size={self.page_buffer_size}"
                 )
         
         lmc_ops.multi_layer_kv_transfer(

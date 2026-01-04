@@ -12,7 +12,7 @@ This script demonstrates:
 import torch
 import time
 import numpy as np
-from nvlink_transfer_engine import DistributedNVLINKTransferEngine
+from vcache.transfer_engine.nvlink_transfer_engine import DistributedNVLINKTransferEngine
 
 class SimpleConfig:
     """Simple config object for the transfer engine"""
@@ -142,17 +142,19 @@ def test_basic_transfer():
             print(f"    Expected sum: {source_sum:.2f}, Got: {after_sum:.2f}")
             success = False
         
-        # Show statistics
-        print(f"\n[Step 7] Transfer statistics:")
-        stats = engine.get_stats()
-        print(f"  Total transfers: {stats['total_transfers']}")
-        print(f"  Successful: {stats['successful_transfers']}")
-        print(f"  Failed: {stats['failed_transfers']}")
-        print(f"  Success rate: {stats['success_rate']:.1f}%")
-        print(f"  Total bytes transferred: {stats['total_bytes_transferred']/1024:.1f}KB")
-        print(f"  Avg transfer time: {stats['avg_transfer_time']*1000:.3f}ms")
-        if stats['peak_bandwidth_gbps'] > 0:
-            print(f"  Peak bandwidth: {stats['peak_bandwidth_gbps']:.1f} Gbps")
+        # Show engine status
+        print(f"\n[Step 7] Engine status:")
+        status = engine.get_status()
+        print(f"  Engine type: {status['engine_type']}")
+        print(f"  Initialized: {status['initialized']}")
+        print(f"  CUDA available: {status['cuda_available']}")
+        print(f"  NVLINK available: {status['nvlink_available']}")
+        print(f"  GPU ID: {status['gpu_id']}")
+        print(f"  Worker thread running: {status['worker_thread_running']}")
+        print(f"  Worker thread alive: {status['worker_thread_alive']}")
+        print(f"  Pending transfers: {status['pending_transfers']}")
+        print(f"  Active transfers: {status['active_transfers']}")
+        print(f"  Completed transfers count: {status['completed_transfers_count']}")
         
         return success
         
@@ -230,12 +232,10 @@ def test_multiple_transfers():
         
         # Statistics
         print(f"\nStatistics for {num_chunks} chunks:")
-        stats = engine.get_stats()
-        total_bytes = stats['total_bytes_transferred']
         print(f"  Total time: {elapsed*1000:.1f}ms")
-        print(f"  Total data: {total_bytes/1024/1024:.1f}MB")
-        print(f"  Throughput: {total_bytes/1024/1024/elapsed:.1f}MB/s")
-        print(f"  Avg latency per transfer: {stats['avg_transfer_time']*1000:.3f}ms")
+        print(f"  Total data: {num_chunks * chunk_size * 4 / 1024 / 1024:.1f}MB")
+        print(f"  Throughput: {num_chunks * chunk_size * 4 / 1024 / 1024 / elapsed:.1f}MB/s")
+        print(f"  Avg latency per transfer: {elapsed / num_chunks * 1000:.3f}ms")
         
         return all_success
         

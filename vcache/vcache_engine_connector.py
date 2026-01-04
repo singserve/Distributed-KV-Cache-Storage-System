@@ -16,7 +16,7 @@ import torch
 
 # First Party
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.utils import CacheEngineKey, cdiv
 from lmcache.vcache.vcache_config import VCacheConfig

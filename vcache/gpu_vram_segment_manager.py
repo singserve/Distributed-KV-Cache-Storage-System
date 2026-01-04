@@ -12,7 +12,7 @@ import time
 import torch
 import ctypes
 
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
 from lmcache.utils import CacheEngineKey
 
@@ -548,11 +548,10 @@ class GPUVRAMSegmentManager:
     after that, memory allocation just slice from pre-allocated segments.
     """
     
-    def __init__(self, config, gpu_id: int, transfer_engine_manager=None, vram_metadata_client=None):
+    def __init__(self, config, gpu_id: int, transfer_engine_manager=None):
         self.config = config
         self.gpu_id = gpu_id
         self.transfer_engine_manager = transfer_engine_manager
-        self.vram_metadata_client = vram_metadata_client 
         
         # GPU VRAM segment management for this specific GPU
         self.segments: List[GPUVRAMSegment] = []  # List of segments on this GPU
@@ -623,43 +622,21 @@ class GPUVRAMSegmentManager:
                         f"address: {hex(base_address)}, "
                         f"segment_id: {segment_id}")
             
-            # Register IPC handle for the segment if IPC client is available
-            assert self.vram_metadata_client is not None
-
-            # Get IPC handle for the allocated GPU memory
-            libcudart = ctypes.CDLL("libcudart.so")
-            cudaIpcGetMemHandle = libcudart.cudaIpcGetMemHandle
-            cudaIpcGetMemHandle.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-            cudaIpcGetMemHandle.restype = ctypes.c_int
-            
-            IPC_HANDLE_SIZE = 64
-            handle_buf = ctypes.create_string_buffer(IPC_HANDLE_SIZE)
-            rc = cudaIpcGetMemHandle(ctypes.cast(handle_buf, ctypes.c_void_p), ctypes.c_void_p(base_address))
-            
-            if rc == 0:
-                handle_bytes = handle_buf.raw
-                # Register the IPC handle with the metadata server
-                success = self.vram_metadata_client.register_segment_ipc_handle(
+            # Register segment with transfer engine manager if available
+            if self.transfer_engine_manager:
+                success = self.transfer_engine_manager.register_segment(
                     segment_id=segment_id,
-                    buffer_pointer=base_address,
-                    handle_bytes=handle_bytes,
+                    base_address=base_address,
                     gpu_id=self.gpu_id,
                     size=segment_size_bytes
                 )
-                
                 if success:
-                    logger.debug(f"Registered IPC handle for segment {segment_id} via IPC client")
+                    logger.debug(f"Registered segment {segment_id} via transfer engine manager")
                 else:
-                    logger.error(f"Failed to register IPC handle for segment {segment_id} via IPC client")
+                    logger.error(f"Failed to register segment {segment_id} via transfer engine manager")
             else:
-                logger.error(f"Failed to get IPC handle for segment {segment_id}: CUDA error code {rc}")
+                logger.warning(f"Transfer engine manager not available, cannot register segment {segment_id}")
 
-            
-            # NVLINK transfer engine doesn't need segment registration
-            # The engine can directly transfer between GPU memory addresses
-            if self.transfer_engine_manager and self.transfer_engine_manager.initialized:
-                logger.debug(f"NVLINK transfer engine available for segment {segment_id}, no registration needed")
-            
             # Restore original device
             torch.cuda.set_device(original_device)
             

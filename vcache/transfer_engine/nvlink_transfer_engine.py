@@ -8,9 +8,11 @@ transfer data between GPU memory addresses using NVLINK.
 import threading
 import time
 import torch
-from typing import Optional, Dict, List
+import ctypes
+from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
 
@@ -27,13 +29,15 @@ class TransferRequest:
     ipc_handle: Optional[bytes] = None  # Serialized cudaIpcMemHandle if source is remote
     src_offset: int = 0  # offset into source buffer (bytes)
     dst_offset: int = 0  # offset into destination buffer (bytes)
-    status: str = "pending"  # pending, in_progress, completed, failed
+    sync: bool = True  # Whether to wait for transfer completion
+    status: str = "pending"  # pending, in_progress, submitted, completed, failed
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     error_message: Optional[str] = None
+    completion_event: Optional[torch.cuda.Event] = None  # CUDA event for async transfer completion
 
 
-class DistributedNVLINKTransferEngine:
+class DistributedNVLINKTransferEngine(TransferEngineInterface):
     """
     Distributed NVLINK Transfer Engine for direct GPU-to-GPU data transfer.
     
@@ -42,19 +46,17 @@ class DistributedNVLINKTransferEngine:
     2. Manage local transfer queues and statistics
     """
     
-    def __init__(self, config, gpu_id: int, segment_manager=None, ipc_client=None):
+    def __init__(self, config, gpu_id: int, ipc_client=None):
         """
         Initialize distributed NVLINK transfer engine for a specific GPU.
         
         Args:
             config: Configuration object
             gpu_id: GPU ID for this engine (0, 1, etc.)
-            segment_manager: GPUVRAMSegmentManager instance for this GPU (optional)
             ipc_client: Optional VRAM metadata IPC client used to request IPC handles
         """
         self.config = config
         self.gpu_id = gpu_id
-        self.segment_manager = segment_manager
         self.ipc_client = ipc_client
         
         self.lock = threading.RLock()
@@ -63,22 +65,14 @@ class DistributedNVLINKTransferEngine:
         self.cuda_available = torch.cuda.is_available()
         self.nvlink_available = self._check_nvlink_availability()
         
+        # Native CUDA library for NVLINK transfers
+        self.cuda_lib = None
+        self._load_cuda_library()
+        
         # Transfer queue management (local to this engine)
         self.transfer_queue: List[TransferRequest] = []
         self.active_transfers: Dict[str, TransferRequest] = {}
         self.completed_transfers: Dict[str, TransferRequest] = {}
-        
-        # Statistics for this engine
-        self.stats = {
-            'total_transfers': 0,
-            'successful_transfers': 0,
-            'failed_transfers': 0,
-            'total_bytes_transferred': 0,
-            'avg_transfer_time': 0.0,
-            'peak_bandwidth_gbps': 0.0,
-            'queue_size': 0,
-            'active_transfers_count': 0
-        }
         
         # Configuration
         self.max_concurrent_transfers = config.get_extra_config_value(
@@ -100,6 +94,43 @@ class DistributedNVLINKTransferEngine:
                    f"NVLINK available: {self.nvlink_available}")
 
     
+    def _load_cuda_library(self):
+        """Load the native CUDA library for NVLINK transfers."""
+        if not self.cuda_available:
+            logger.warning("CUDA not available, cannot load CUDA library")
+            return
+        
+        try:
+            import ctypes
+            libname = "./native/build/libnvlink_transfer.so"
+            self.cuda_lib = ctypes.CDLL(libname)
+            logger.debug(f"Loaded native nvlink helper: {libname}")
+            
+            # Set up function signatures
+            self.cuda_lib.perform_direct_transfer.argtypes = [
+                ctypes.c_int,          # source_gpu
+                ctypes.c_ulonglong,    # source_ptr
+                ctypes.c_int,          # target_gpu
+                ctypes.c_ulonglong,    # target_ptr
+                ctypes.c_ulonglong,    # size
+                ctypes.c_void_p,       # src_ipc_handle (pointer or None)
+                ctypes.c_uint,         # src_ipc_handle_size
+                ctypes.c_void_p,       # dst_ipc_handle
+                ctypes.c_uint,         # dst_ipc_handle_size
+                ctypes.c_ulonglong,    # src_offset
+                ctypes.c_ulonglong,    # dst_offset
+                ctypes.c_void_p        # stream
+            ]
+            self.cuda_lib.perform_direct_transfer.restype = ctypes.c_int
+            
+            # Set up error string function
+            self.cuda_lib.cudaGetErrorString.argtypes = [ctypes.c_int]
+            self.cuda_lib.cudaGetErrorString.restype = ctypes.c_char_p
+            
+        except Exception as e:
+            logger.error(f"Native nvlink helper not available: {e}")
+            self.cuda_lib = None
+    
     def _check_nvlink_availability(self) -> bool:
         """
         Check if NVLINK is available between GPUs.
@@ -114,7 +145,8 @@ class DistributedNVLINKTransferEngine:
         try:
             num_gpus = torch.cuda.device_count()
             if num_gpus < 2:
-                logger.warning(f"Only {num_gpus} GPU(s) available, NVLINK transfers require at least 2 GPUs")
+                logger.warning(f"Only {num_gpus} GPU(s) available, "
+                               f"NVLINK transfers require at least 2 GPUs")
                 return False
             
             # Check peer-to-peer access between GPUs
@@ -125,7 +157,7 @@ class DistributedNVLINKTransferEngine:
                     try:
                         can_access = torch.cuda.can_device_access_peer(i, j)
                         if can_access:
-                            logger.info(f"GPU {i} can access GPU {j} (peer access enabled)")
+                            logger.debug(f"GPU {i} can access GPU {j} (peer access enabled)")
                             nvlink_available = True
                     except Exception as e:
                         logger.debug(f"Error checking peer access between GPU {i} and {j}: {e}")
@@ -166,8 +198,6 @@ class DistributedNVLINKTransferEngine:
                             logger.warning(f"Cannot enable peer access from GPU {i} to GPU {j}: {e}")
             # Start the transfer worker thread
             self._start_worker_thread()
-            
-            logger.info("NVLINK transfer engine initialization completed")
             
         except Exception as e:
             logger.error(f"Error initializing transfer engine: {e}")
@@ -249,8 +279,8 @@ class DistributedNVLINKTransferEngine:
             if request.source_gpu == request.target_gpu:
                 raise ValueError(f"Source and target GPU are the same: {request.source_gpu}")
             
-            # Perform the transfer
-            success = self._perform_direct_transfer(
+            # Perform the transfer (asynchronous)
+            success, completion_event = self._perform_direct_transfer(
                 source_gpu=request.source_gpu,
                 target_gpu=request.target_gpu,
                 source_address=request.source_address,
@@ -261,19 +291,32 @@ class DistributedNVLINKTransferEngine:
                 dst_offset=request.dst_offset,
             )
             
-            # Update request status
-            request.end_time = time.time()
-            if success:
+            if not success:
+                request.status = "failed"
+                request.error_message = "Transfer submission failed"
+                request.end_time = time.time()
+                logger.error(f"Transfer {request.request_id} submission failed: "
+                           f"GPU {request.source_gpu} -> GPU {request.target_gpu}")
+                return
+            
+            # Store completion event for later synchronization
+            request.completion_event = completion_event
+            
+            # If sync is True, wait for completion now
+            if request.sync and completion_event is not None:
+                completion_event.synchronize()
+                request.end_time = time.time()
                 request.status = "completed"
-                logger.info(f"Transfer {request.request_id} completed successfully: "
+                logger.info(f"Transfer {request.request_id} completed synchronously: "
                           f"GPU {request.source_gpu} -> GPU {request.target_gpu}, "
                           f"size: {request.size} bytes, "
                           f"time: {request.end_time - request.start_time:.3f}s")
             else:
-                request.status = "failed"
-                request.error_message = "Transfer failed"
-                logger.error(f"Transfer {request.request_id} failed: "
-                           f"GPU {request.source_gpu} -> GPU {request.target_gpu}")
+                # For async transfers, mark as "submitted" not "completed"
+                request.status = "submitted"
+                logger.info(f"Transfer {request.request_id} submitted asynchronously: "
+                          f"GPU {request.source_gpu} -> GPU {request.target_gpu}, "
+                          f"size: {request.size} bytes")
             
         except Exception as e:
             request.status = "failed"
@@ -282,7 +325,7 @@ class DistributedNVLINKTransferEngine:
             logger.error(f"Error executing transfer {request.request_id}: {e}")
         
         finally:
-            # Move from active to completed
+            # Move from active to completed/submitted
             with self.lock:
                 if request.request_id in self.active_transfers:
                     del self.active_transfers[request.request_id]
@@ -303,15 +346,25 @@ class DistributedNVLINKTransferEngine:
                             size: int,
                             ipc_handle: Optional[bytes] = None,
                             src_offset: int = 0,
-                            dst_offset: int = 0) -> bool:
+                            dst_offset: int = 0):
         """Perform direct GPU-to-GPU transfer using NVLINK with low-level CUDA APIs.
+        This function is asynchronous - it submits the transfer and returns immediately.
+        Synchronization is done through the recorded CUDA event.
 
         Args:
-            ipc_handle: serialized cudaIpcMemHandle if source allocation is remote
+            ipc_handle: serialized cudaIpcMemHandle if is remote
+        
+        Returns:
+            Tuple of (success: bool, completion_event: Optional[torch.cuda.Event])
+            If success is False, completion_event is None.
         """
         if not self.cuda_available:
             logger.error("CUDA not available for direct transfer")
-            return False
+            return False, None
+        
+        if self.cuda_lib is None:
+            logger.error("CUDA library not loaded for direct transfer")
+            return False, None
         
         original_device = torch.cuda.current_device()
         
@@ -320,53 +373,25 @@ class DistributedNVLINKTransferEngine:
             if source_gpu >= device_count or target_gpu >= device_count:
                 logger.error(f"Invalid GPU IDs: source_gpu={source_gpu}, "
                              f"target_gpu={target_gpu}")
-                return False
+                return False, None
 
             # Allow one address to be zero if ipc_handle is provided
             if (target_address == 0 and ipc_handle is None) or \
                (source_address == 0 and ipc_handle is None):
                 logger.error(f"Invalid memory address; "
                              f"note: address may be 0 if ipc_handle is provided")
-                return False
+                return False, None
             
             can_access = torch.cuda.can_device_access_peer(source_gpu, target_gpu)
             
             if not can_access:
                 logger.error(f"Peer access not enabled "
                              f"from GPU {source_gpu} to GPU {target_gpu}")
-                return False
+                return False, None
             
             torch.cuda.set_device(source_gpu)
             
             stream = torch.cuda.Stream(device=source_gpu)
-            
-            import ctypes
-
-            libname = "libnvlink_transfer.so"
-            try:
-                cuda_lib = ctypes.CDLL(libname)
-                logger.debug(f"Loaded native nvlink helper: {libname}")
-            except Exception as e:
-                logger.error(f"Native nvlink helper not available: {e}")
-                return False
-
-            # native library exports perform_direct_transfer
-            perform_direct_transfer_native = cuda_lib.perform_direct_transfer
-            perform_direct_transfer_native.argtypes = [
-                ctypes.c_int,          # source_gpu
-                ctypes.c_ulonglong,    # source_ptr
-                ctypes.c_int,          # target_gpu
-                ctypes.c_ulonglong,    # target_ptr
-                ctypes.c_ulonglong,    # size
-                ctypes.c_void_p,       # src_ipc_handle (pointer or None)
-                ctypes.c_uint,         # src_ipc_handle_size
-                ctypes.c_void_p,       # dst_ipc_handle
-                ctypes.c_uint,         # dst_ipc_handle_size
-                ctypes.c_ulonglong,    # src_offset
-                ctypes.c_ulonglong,    # dst_offset
-                ctypes.c_void_p        # stream
-            ]
-            perform_direct_transfer_native.restype = ctypes.c_int
 
             # Prepare handle buffer and sizes
             _tmp_src_buf = None
@@ -380,8 +405,8 @@ class DistributedNVLINKTransferEngine:
             # Stream pointer
             stream_ptr = ctypes.c_void_p(stream.cuda_stream)
 
-            # Call native helper
-            res = perform_direct_transfer_native(
+            # Call native helper using pre-loaded library
+            res = self.cuda_lib.perform_direct_transfer(
                     ctypes.c_int(source_gpu),
                     ctypes.c_ulonglong(int(source_address)),
                     ctypes.c_int(target_gpu),
@@ -397,67 +422,39 @@ class DistributedNVLINKTransferEngine:
                 )
             if res != 0:
                 try:
-                    cuda_get_error_string = cuda_lib.cudaGetErrorString
-                    cuda_get_error_string.argtypes = [ctypes.c_int]
-                    cuda_get_error_string.restype = ctypes.c_char_p
-                    error_msg = cuda_get_error_string(res)
+                    error_msg = self.cuda_lib.cudaGetErrorString(res)
                     logger.error(f"Native transfer failed: {error_msg.decode() if error_msg else res}")
                 except Exception:
                     logger.error(f"Native transfer failed with code: {res}")
 
-                return False
+                return False, None
 
-            # Wait for copy to complete
-            stream.synchronize()
+            # Create and record completion event (asynchronous)
+            completion_event = torch.cuda.Event(enable_timing=False)
+            completion_event.record(stream)
 
-            logger.info(f"Direct transfer completed: GPU {source_gpu}->{target_gpu}, "
-                        f"size={size} bytes ({size/1024/1024:.2f} MB)")
-            return True
+            logger.debug(f"Direct transfer submitted asynchronously: "
+                         f"GPU {source_gpu}->{target_gpu}, "
+                         f"size={size} bytes ({size/1024/1024:.2f} MB)")
+            return True, completion_event
 
        
         except Exception as e:
             logger.error(f"Error in direct transfer: {e}", exc_info=True)
-            return False
+            return False, None
             
         finally:
             torch.cuda.set_device(original_device)
   
     
     def _cleanup_completed_transfers(self):
-        """Clean up old completed transfers and update statistics."""
+        """Clean up old completed transfers."""
         with self.lock:
-            # Update statistics
-            self.stats['queue_size'] = len(self.transfer_queue)
-            self.stats['active_transfers_count'] = len(self.active_transfers)
-            
-            # Calculate transfer statistics from completed transfers
-            successful_transfers = 0
-            failed_transfers = 0
-            total_bytes = 0
-            total_time = 0.0
-            
-            for request in self.completed_transfers.values():
-                if request.status == "completed":
-                    successful_transfers += 1
-                    total_bytes += request.size
-                    if request.start_time and request.end_time:
-                        total_time += (request.end_time - request.start_time)
-                elif request.status == "failed":
-                    failed_transfers += 1
-            
-            # Update stats
-            self.stats['successful_transfers'] = successful_transfers
-            self.stats['failed_transfers'] = failed_transfers
-            self.stats['total_transfers'] = successful_transfers + failed_transfers
-            self.stats['total_bytes_transferred'] = total_bytes
-            
-            if successful_transfers > 0:
-                self.stats['avg_transfer_time'] = total_time / successful_transfers
-                if total_time > 0:
-                    bandwidth_gbps = (total_bytes / (1024**3)) / (total_time / successful_transfers)
-                    self.stats['peak_bandwidth_gbps'] = max(
-                        self.stats['peak_bandwidth_gbps'], bandwidth_gbps
-                    )
+            # Keep only recent completed transfers to avoid memory leak
+            if len(self.completed_transfers) > 1000:
+                oldest_ids = sorted(self.completed_transfers.keys())[:100]
+                for old_id in oldest_ids:
+                    del self.completed_transfers[old_id]
     
     # ==================== Public API ====================
     
@@ -469,7 +466,8 @@ class DistributedNVLINKTransferEngine:
                        size: int,
                        ipc_handle: Optional[bytes] = None,
                        src_offset: int = 0,
-                       dst_offset: int = 0) -> str:
+                       dst_offset: int = 0,
+                       sync: bool = True) -> str:
         """
         Submit a transfer request to the engine.
         
@@ -482,6 +480,7 @@ class DistributedNVLINKTransferEngine:
             ipc_handle : Optional serialized cudaIpcMemHandle if one address is remote
             src_offset: Offset into source buffer (bytes)
             dst_offset: Offset into destination buffer (bytes)
+            sync: Whether to wait for transfer completion. 
             
         Returns:
             Transfer request ID
@@ -511,6 +510,7 @@ class DistributedNVLINKTransferEngine:
             ipc_handle=ipc_handle,
             src_offset=src_offset,
             dst_offset=dst_offset,
+            sync=sync,
             status="pending"
         )
         
@@ -521,9 +521,55 @@ class DistributedNVLINKTransferEngine:
             
             logger.debug(f"Submitted transfer request {request_id}: "
                        f"GPU {source_gpu} -> GPU {target_gpu}, "
-                       f"size: {size} bytes")
+                       f"size: {size} bytes, sync: {sync}")
         
         return request_id
+    
+    def transfer_gpu_to_gpu(
+        self,
+        source_gpu: int,
+        target_gpu: int,
+        source_buffer: int,
+        target_buffer: int,
+        size: int,
+        src_hostname: str = "localhost",
+        target_hostname: str = "localhost",
+        src_offset: int = 0,
+        dst_offset: int = 0,
+        **kwargs
+    ) -> bool:
+        """
+        Transfer data between GPUs.
+        
+        Args:
+            source_gpu: Source GPU ID
+            target_gpu: Target GPU ID
+            source_buffer: Source GPU memory address (int) or buffer object
+            target_buffer: Target GPU memory address (int) or buffer object
+            size: Size to transfer in bytes
+            src_hostname: Hostname where source GPU is located (default: "localhost")
+            target_hostname: Hostname where target GPU is located (default: "localhost")
+            src_offset: Offset into source buffer (bytes)
+            dst_offset: Offset into destination buffer (bytes)
+            **kwargs: Additional implementation-specific parameters
+            
+        Returns:
+            True if transfer successful, False otherwise
+        """
+        # Extract ipc_handle from kwargs if provided
+        ipc_handle = kwargs.get('ipc_handle', None)
+        
+        # Call transfer_sync method with the same parameters
+        return self.transfer_sync(
+            source_gpu=source_gpu,
+            target_gpu=target_gpu,
+            source_address=source_buffer,
+            target_address=target_buffer,
+            size=size,
+            ipc_handle=ipc_handle,
+            src_offset=src_offset,
+            dst_offset=dst_offset
+        )
     
     def transfer_sync(self,
                      source_gpu: int,
@@ -550,7 +596,7 @@ class DistributedNVLINKTransferEngine:
         Returns:
             True if transfer successful, False otherwise
         """
-        # Submit transfer
+        # Submit transfer with sync=True (explicitly synchronous)
         request_id = self.submit_transfer(
             source_gpu=source_gpu,
             target_gpu=target_gpu,
@@ -559,7 +605,8 @@ class DistributedNVLINKTransferEngine:
             size=size,
             ipc_handle=ipc_handle,
             src_offset=src_offset,
-            dst_offset=dst_offset
+            dst_offset=dst_offset,
+            sync=True  # Explicitly set sync=True for synchronous transfer
         )
         
         # Wait for transfer to complete
@@ -580,10 +627,23 @@ class DistributedNVLINKTransferEngine:
         
         while time.time() - start_time < timeout:
             with self.lock:
-                # Check if transfer is completed
+                # Check if transfer is in completed transfers
                 if request_id in self.completed_transfers:
                     request = self.completed_transfers[request_id]
-                    return request.status == "completed"
+                    
+                    # If status is "completed", return True
+                    if request.status == "completed":
+                        return True
+                    # If status is "submitted", check if the CUDA event has completed
+                    elif request.status == "submitted" and request.completion_event is not None:
+                        # Check if the CUDA event has completed
+                        if request.completion_event.query():
+                            # Update status to completed
+                            request.status = "completed"
+                            request.end_time = time.time()
+                            logger.debug(f"Transfer {request_id} completed asynchronously")
+                            return True
+                        # Event not completed yet, continue waiting
                 
                 # Check if transfer is still active (being executed)
                 if request_id in self.active_transfers:
@@ -703,35 +763,40 @@ class DistributedNVLINKTransferEngine:
         logger.warning(f"Transfer request {request_id} not found")
         return False
     
-    def get_stats(self) -> Dict:
+    def get_status(self) -> Dict[str, Any]:
         """
-        Get transfer engine statistics.
+        Get transfer engine status.
         
         Returns:
-            Dictionary with statistics
+            Dictionary containing engine status and health information
         """
         with self.lock:
-            stats = self.stats.copy()
+            status = {
+                'engine_type': 'DistributedNVLINKTransferEngine',
+                'initialized': True,
+                'cuda_available': self.cuda_available,
+                'nvlink_available': self.nvlink_available,
+                'gpu_id': self.gpu_id,
+                'worker_thread_running': self._worker_running if hasattr(self, '_worker_running') else False,
+                'worker_thread_alive': self._worker_thread.is_alive() if self._worker_thread else False,
+                'max_concurrent_transfers': self.max_concurrent_transfers,
+                'transfer_timeout_sec': self.transfer_timeout_sec,
+                'ipc_client_available': self.ipc_client is not None,
+                'pending_transfers': len(self.transfer_queue),
+                'active_transfers': len(self.active_transfers),
+                'completed_transfers_count': len(self.completed_transfers),
+            }
             
-            # Add queue information
-            stats['pending_transfers'] = len(self.transfer_queue)
-            stats['active_transfers'] = len(self.active_transfers)
-            stats['completed_transfers_count'] = len(self.completed_transfers)
-            
-            # Calculate success rate
-            total = stats['successful_transfers'] + stats['failed_transfers']
-            if total > 0:
-                stats['success_rate'] = (stats['successful_transfers'] / total) * 100
-            else:
-                stats['success_rate'] = 0.0
-            
-            return stats
+            return status
     
     # need modification here
     def batch_transfer(self, 
                       source_gpu: int,
                       target_gpu: int,
-                      transfers: list) -> list:
+                      transfers: list,
+                      ipc_handles: Optional[List[bytes]] = None,
+                      src_offsets: Optional[List[int]] = None,
+                      dst_offsets: Optional[List[int]] = None) -> list:
         """
         Batch transfer multiple buffers from source GPU to target GPU.
         
@@ -744,6 +809,9 @@ class DistributedNVLINKTransferEngine:
             target_gpu: Target GPU ID
             transfers: List of tuples (source_address, target_address, size_bytes)
                       Example: [(src_addr1, dst_addr1, size1), (src_addr2, dst_addr2, size2), ...]
+            ipc_handles: Optional list of IPC handles for each transfer (same length as transfers)
+            src_offsets: Optional list of source offsets for each transfer (same length as transfers)
+            dst_offsets: Optional list of destination offsets for each transfer (same length as transfers)
         
         Returns:
             List of transfer results (one dict per transfer) with keys:
@@ -752,38 +820,49 @@ class DistributedNVLINKTransferEngine:
             - 'size': Size of transfer
             - 'duration_sec': Time taken for this transfer
             - 'error': Error message if failed
-            
-        Example:
-            >>> # Transfer 10 files of 64KB each
-            >>> transfers = [(addr1, addr1', 65536), (addr2, addr2', 65536), ...]
-            >>> results = engine.batch_transfer(source_gpu=1, target_gpu=0, transfers=transfers)
-            >>> for result in results:
-            ...     print(f"Transfer {result['request_id']}: {result['status']}")
         """
         if not transfers:
             logger.warning("batch_transfer called with empty transfer list")
             return []
         
-        logger.info(f"Batch transfer: {len(transfers)} transfers, "
+        # Validate optional parameter lengths
+        num_transfers = len(transfers)
+        if ipc_handles is not None and len(ipc_handles) != num_transfers:
+            raise ValueError(f"ipc_handles length ({len(ipc_handles)}) must match transfers length ({num_transfers})")
+        if src_offsets is not None and len(src_offsets) != num_transfers:
+            raise ValueError(f"src_offsets length ({len(src_offsets)}) must match transfers length ({num_transfers})")
+        if dst_offsets is not None and len(dst_offsets) != num_transfers:
+            raise ValueError(f"dst_offsets length ({len(dst_offsets)}) must match transfers length ({num_transfers})")
+        
+        logger.info(f"Batch transfer: {num_transfers} transfers, "
                    f"total size: {sum(t[2] for t in transfers) / (1024**2):.2f}MB")
         
-        # Step 1: Submit all transfers concurrently
+        # Step 1: Submit all transfers concurrently with sync=False for better performance
         request_ids = []
-        for src_addr, dst_addr, size in transfers:
+        for i, (src_addr, dst_addr, size) in enumerate(transfers):
             try:
+                # Get optional parameters for this transfer
+                ipc_handle = ipc_handles[i] if ipc_handles is not None else None
+                src_offset = src_offsets[i] if src_offsets is not None else 0
+                dst_offset = dst_offsets[i] if dst_offsets is not None else 0
+                
                 request_id = self.submit_transfer(
                     source_gpu=source_gpu,
                     target_gpu=target_gpu,
                     source_address=src_addr,
                     target_address=dst_addr,
-                    size=size
+                    size=size,
+                    ipc_handle=ipc_handle,
+                    src_offset=src_offset,
+                    dst_offset=dst_offset,
+                    sync=False  # Use async submission for batch transfers
                 )
                 request_ids.append(request_id)
             except Exception as e:
-                logger.error(f"Failed to submit batch transfer: {e}")
+                logger.error(f"Failed to submit batch transfer {i}: {e}")
                 return []
         
-        logger.debug(f"Submitted {len(request_ids)} concurrent transfers")
+        logger.debug(f"Submitted {len(request_ids)} concurrent transfers (async)")
         
         # Step 2: Wait for all transfers to complete
         results = []
@@ -828,75 +907,91 @@ class DistributedNVLINKTransferEngine:
                            source_gpu: int,
                            target_gpu: int,
                            transfers: list,
-                           timeout: float = 30.0) -> dict:
+                           timeout: float = 30.0,
+                           ipc_handles: Optional[List[bytes]] = None,
+                           src_offsets: Optional[List[int]] = None,
+                           dst_offsets: Optional[List[int]] = None) -> dict:
         """
         Synchronous batch transfer with optimized waiting mechanism.
-        
-        IMPORTANT: Uses optimized polling to avoid lock contention.
-        Do NOT use sequential wait_for_transfer() calls!
         
         Args:
             source_gpu: Source GPU ID
             target_gpu: Target GPU ID
             transfers: List of (source_addr, target_addr, size) tuples
             timeout: Timeout in seconds for entire batch
+            ipc_handles: Optional list of IPC handles for each transfer (same length as transfers)
+            src_offsets: Optional list of source offsets for each transfer (same length as transfers)
+            dst_offsets: Optional list of destination offsets for each transfer (same length as transfers)
             
         Returns:
             Dictionary with:
-            - 'success': bool indicating if all transfers completed
-            - 'results': List of individual transfer results
+            - 'success': bool indicating if all transfers completed successfully
             - 'total_bytes': Total bytes transferred
             - 'total_time_sec': Time taken for batch
-            - 'throughput_gbps': Aggregated throughput
-            - 'num_transfers': Number of transfers
-            - 'num_failed': Number of failed transfers
         """
         if not transfers:
             return {
                 'success': False,
-                'results': [],
                 'total_bytes': 0,
-                'total_time_sec': 0,
-                'throughput_gbps': 0,
-                'num_transfers': 0,
-                'num_failed': 0
+                'total_time_sec': 0
             }
+        
+        # Validate optional parameter lengths
+        num_transfers = len(transfers)
+        if ipc_handles is not None and len(ipc_handles) != num_transfers:
+            raise ValueError(f"ipc_handles length ({len(ipc_handles)}) must match transfers length ({num_transfers})")
+        if src_offsets is not None and len(src_offsets) != num_transfers:
+            raise ValueError(f"src_offsets length ({len(src_offsets)}) must match transfers length ({num_transfers})")
+        if dst_offsets is not None and len(dst_offsets) != num_transfers:
+            raise ValueError(f"dst_offsets length ({len(dst_offsets)}) must match transfers length ({num_transfers})")
         
         start_time = time.time()
         
-        # Phase 1: Submit all transfers
+        # Phase 1: Submit all transfers with sync=False for better performance
         request_ids = []
-        for src_addr, dst_addr, size in transfers:
+        total_size = 0
+        for i, (src_addr, dst_addr, size) in enumerate(transfers):
             try:
+                # Get optional parameters for this transfer
+                ipc_handle = ipc_handles[i] if ipc_handles is not None else None
+                src_offset = src_offsets[i] if src_offsets is not None else 0
+                dst_offset = dst_offsets[i] if dst_offsets is not None else 0
+                
                 request_id = self.submit_transfer(
                     source_gpu=source_gpu,
                     target_gpu=target_gpu,
                     source_address=src_addr,
                     target_address=dst_addr,
-                    size=size
+                    size=size,
+                    ipc_handle=ipc_handle,
+                    src_offset=src_offset,
+                    dst_offset=dst_offset,
+                    sync=False  # Use async submission for batch transfers
                 )
                 request_ids.append(request_id)
+                total_size += size
             except Exception as e:
-                logger.error(f"Failed to submit batch transfer: {e}")
+                logger.error(f"Failed to submit batch transfer {i}: {e}")
                 return {
                     'success': False,
-                    'results': [],
                     'total_bytes': 0,
-                    'total_time_sec': time.time() - start_time,
-                    'throughput_gbps': 0,
-                    'num_transfers': 0,
-                    'num_failed': len(request_ids)
+                    'total_time_sec': time.time() - start_time
                 }
         
-        logger.debug(f"Submitted {len(request_ids)} concurrent transfers")
+        logger.debug(f"Submitted {len(request_ids)} concurrent transfers (async), total size: {total_size/1024/1024:.2f}MB")
         
         # Phase 2: Wait for all transfers with OPTIMIZED polling
-        # KEY OPTIMIZATION: Check all transfers together to reduce lock contention
+        # Check all transfers together to reduce lock contention
         completed = set()
         failed = set()
         
+        # Adaptive polling interval based on remaining transfers
+        poll_interval = 0.001  # Start with 1ms
+        max_poll_interval = 0.1  # Maximum 100ms
+        
         while len(completed) + len(failed) < len(request_ids):
             # Check all pending transfers in one pass
+            pending_count = 0
             for request_id in request_ids:
                 if request_id in completed or request_id in failed:
                     continue
@@ -909,7 +1004,17 @@ class DistributedNVLINKTransferEngine:
                         completed.add(request_id)
                     elif status['status'] == 'failed':
                         failed.add(request_id)
-        
+                    else:
+                        pending_count += 1
+                else:
+                    pending_count += 1
+            
+            # Adaptive sleep based on pending count
+            if pending_count > 0:
+                # Increase sleep time as more transfers complete
+                remaining_ratio = pending_count / len(request_ids)
+                adaptive_sleep = min(poll_interval * (1.0 / max(remaining_ratio, 0.1)), max_poll_interval)
+                time.sleep(adaptive_sleep)
             
             # Check timeout
             elapsed = time.time() - start_time
@@ -917,53 +1022,29 @@ class DistributedNVLINKTransferEngine:
                 logger.warning(f"Batch transfer timeout after {elapsed:.1f}s")
                 break
         
-        # Phase 3: Collect results
-        results = []
-        for request_id in request_ids:
-            status = self.get_transfer_status(request_id)
-            if status:
-                results.append({
-                    'request_id': request_id,
-                    'status': status['status'],
-                    'size': status['size'],
-                    'duration_sec': status['duration'],
-                    'error': status['error_message']
-                })
-            else:
-                results.append({
-                    'request_id': request_id,
-                    'status': 'unknown',
-                    'size': 0,
-                    'duration_sec': None,
-                    'error': 'Could not retrieve status'
-                })
-        
         # Calculate metrics
         total_time = time.time() - start_time
         successful = len(completed)
         failed_count = len(failed)
-        total_bytes = sum(r['size'] for r in results if r['status'] == 'completed')
         
-        # Calculate throughput
-        throughput_gbps = 0
-        if total_time > 0:
-            throughput_gbps = (total_bytes / (1024**3)) / total_time
+        # Calculate total bytes transferred (only from successful transfers)
+        total_bytes = 0
+        for i, (src_addr, dst_addr, size) in enumerate(transfers):
+            if i < len(request_ids):
+                request_id = request_ids[i]
+                if request_id in completed:
+                    total_bytes += size
         
         logger.info(f"Batch transfer complete: {successful}/{len(request_ids)} successful, "
-                   f"{total_bytes / (1024**2):.2f}MB transferred in {total_time:.3f}s "
-                   f"({throughput_gbps:.2f} Gbps)")
+                   f"{total_bytes / (1024**2):.2f}MB transferred in {total_time:.3f}s")
         
         if failed_count > 0:
             logger.warning(f"Batch transfer: {failed_count} transfers failed")
         
         return {
             'success': failed_count == 0,
-            'results': results,
             'total_bytes': total_bytes,
-            'total_time_sec': total_time,
-            'throughput_gbps': throughput_gbps,
-            'num_transfers': len(request_ids),
-            'num_failed': failed_count
+            'total_time_sec': total_time
         }
     
     def clear_completed_transfers(self) -> int:
@@ -1003,20 +1084,100 @@ class DistributedNVLINKTransferEngine:
             self.transfer_queue.clear()
             self.active_transfers.clear()
             self.completed_transfers.clear()
-            
-            # Reset statistics
-            self.stats = {
-                'total_transfers': 0,
-                'successful_transfers': 0,
-                'failed_transfers': 0,
-                'total_bytes_transferred': 0,
-                'avg_transfer_time': 0.0,
-                'peak_bandwidth_gbps': 0.0,
-                'queue_size': 0,
-                'active_transfers_count': 0
-            }
         
         logger.info("NVLINK transfer engine shutdown completed")
+    
+    def register_segment(self, segment_id: str, base_address: int, gpu_id: int, size: int) -> bool:
+        """
+        Register a GPU memory segment with the metadata server 
+        by obtaining and registering its IPC handle.
+        
+        Args:
+            segment_id: Unique segment identifier
+            base_address: Base GPU memory address of the segment
+            gpu_id: GPU device ID
+            size: Segment size in bytes
+            
+        Returns:
+            True if registration successful, False otherwise
+        """
+        if not self.ipc_client:
+            logger.warning("IPC client not available, cannot register segment")
+            return False
+        
+        try:
+            
+            # Get IPC handle for the allocated GPU memory
+            libcudart = ctypes.CDLL("libcudart.so")
+            cudaIpcGetMemHandle = libcudart.cudaIpcGetMemHandle
+            cudaIpcGetMemHandle.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            cudaIpcGetMemHandle.restype = ctypes.c_int
+            
+            IPC_HANDLE_SIZE = 64
+            handle_buf = ctypes.create_string_buffer(IPC_HANDLE_SIZE)
+            rc = cudaIpcGetMemHandle(ctypes.cast(handle_buf, ctypes.c_void_p), ctypes.c_void_p(base_address))
+            
+            if rc != 0:
+                logger.error(f"Failed to get IPC handle for segment {segment_id}: "
+                             f"CUDA error code {rc}")
+                return False
+            
+            handle_bytes = handle_buf.raw
+            
+            # Register the IPC handle with the metadata server
+            success = self.ipc_client.register_segment_ipc_handle(
+                segment_id=segment_id,
+                buffer_pointer=base_address,
+                handle_bytes=handle_bytes,
+                gpu_id=gpu_id,
+                size=size
+            )
+            
+            if success:
+                logger.debug(f"Registered segment {segment_id} via IPC client")
+            else:
+                logger.error(f"Failed to register segment {segment_id} via IPC client")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error registering segment {segment_id}: {e}")
+            return False
+    
+    def unregister_segment(self, segment_id: str, base_address: int, gpu_id: int) -> bool:
+        """
+        Unregister a GPU memory segment from the metadata server.
+        
+        Args:
+            segment_id: Unique segment identifier
+            base_address: Base GPU memory address of the segment
+            gpu_id: GPU device ID
+            
+        Returns:
+            True if unregistration successful, False otherwise
+        """
+        if not self.ipc_client:
+            logger.warning("IPC client not available, cannot unregister segment")
+            return False
+        
+        try:
+            # Unregister the IPC handle from the metadata server
+            success = self.ipc_client.unregister_segment_ipc_handle(
+                segment_id=segment_id,
+                buffer_pointer=base_address,
+                gpu_id=gpu_id
+            )
+            
+            if success:
+                logger.debug(f"Unregistered segment {segment_id} via IPC client")
+            else:
+                logger.error(f"Failed to unregister segment {segment_id} via IPC client")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error unregistering segment {segment_id}: {e}")
+            return False
     
     def __del__(self):
         """Destructor to ensure proper shutdown."""

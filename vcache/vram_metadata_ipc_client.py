@@ -13,7 +13,7 @@ from multiprocessing.managers import BaseManager
 import torch
 
 from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMEntry
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)
@@ -420,6 +420,53 @@ class VRAMMetadataIPCClient:
             except Exception as e:
                 self.failed_requests += 1
                 logger.error(f"IPC register_segment_ipc_handle failed: {e}")
+                return False
+    
+    def unregister_segment_ipc_handle(self, segment_id: str, buffer_pointer: int, gpu_id: int) -> bool:
+        """
+        Unregister a previously registered segment IPC handle.
+        
+        Args:
+            segment_id: Unique segment identifier
+            buffer_pointer: Base GPU memory address of the segment
+            gpu_id: GPU device ID
+            
+        Returns:
+            True if unregistration successful, False otherwise
+        """
+        with self.lock:
+            self.total_requests += 1
+            try:
+                self._ensure_connection()
+                
+                # First, we need to register the unregister method with the manager
+                # Since we haven't registered it yet, we need to check if it's available
+                # We'll try to call it and handle the case where it doesn't exist
+                try:
+                    res_proxy = self.server_proxy.unregister_segment_ipc_handle(segment_id, buffer_pointer, gpu_id)
+                    if hasattr(res_proxy, '_getvalue'):
+                        res = res_proxy._getvalue()
+                    else:
+                        res = res_proxy
+                    
+                    if res:
+                        logger.info(f"Unregistered segment IPC handle via IPC: {segment_id} "
+                                   f"@ GPU{gpu_id}:{hex(buffer_pointer)}")
+                        return True
+                    else:
+                        self.failed_requests += 1
+                        logger.error("Server failed to unregister segment IPC handle")
+                        return False
+                except AttributeError:
+                    # Method not registered on server, log warning and return False
+                    logger.warning(f"unregister_segment_ipc_handle method not available on server. "
+                                  f"Please update the server to support this method.")
+                    self.failed_requests += 1
+                    return False
+                    
+            except Exception as e:
+                self.failed_requests += 1
+                logger.error(f"IPC unregister_segment_ipc_handle failed: {e}")
                 return False
 
     def batch_get_entry(self, keys: List[CacheEngineKey]) -> List[Optional[object]]:

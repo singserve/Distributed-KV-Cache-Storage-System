@@ -11,7 +11,7 @@ import time
 from multiprocessing.managers import BaseManager
 import torch
 
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import CacheEngineKey
 from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMPoolManager
 logger = init_logger(__name__)
@@ -81,6 +81,7 @@ class VRAMMetadataIPCServer:
         VRAMManager.register('batch_get_entry', self.batch_get_entry)
         VRAMManager.register('get_ipc_mem_handle', self.get_ipc_mem_handle)
         VRAMManager.register('register_segment_ipc_handle', self.register_segment_ipc_handle)
+        VRAMManager.register('unregister_segment_ipc_handle', self.unregister_segment_ipc_handle)
         VRAMManager.register('remove', self.remove)
         VRAMManager.register('get_stats', self.get_stats)
         VRAMManager.register('health_check', self.health_check)
@@ -128,7 +129,9 @@ class VRAMMetadataIPCServer:
                 self.request_stats['lookup_prefix'] += 1
                 
                 # Log request details
-                logger.info(f"IPC lookup_prefix request - Tokens: {len(token_ids)}, GPU: {current_gpu_id}")
+                logger.info(f"IPC lookup_prefix request - "
+                            f"Tokens: {len(token_ids)}, "
+                            f"GPU: {current_gpu_id}")
                 
                 # Deserialize all_chunks if provided
                 deserialized_chunks = None
@@ -146,7 +149,8 @@ class VRAMMetadataIPCServer:
                 )
                 
                 # Log detailed results
-                logger.info(f"IPC lookup result - Hits: {hit_tokens}, Chunks: {len(chunk_info_list) if chunk_info_list else 0}")
+                logger.info(f"IPC lookup result - Hits: {hit_tokens}, "
+                            f"Chunks: {len(chunk_info_list) if chunk_info_list else 0}")
                 if hit_tokens > 0 and chunk_info_list:
                     for i, ((start, end), gpu_id, needs_transfer) in enumerate(chunk_info_list):
                         logger.debug(f"Chunk {i}: [{start}, {end}) -> GPU {gpu_id}, needs_transfer={needs_transfer}")
@@ -449,7 +453,7 @@ class VRAMMetadataIPCServer:
                     
                     # Check if the address is within this segment
                     if buffer_ptr >= seg_base and buffer_ptr < seg_base + seg_size:
-                        logger.debug(f"Found pre-registered segment IPC handle "
+                        logger.info(f"Found pre-registered segment IPC handle "
                                      f"for address {hex(buffer_ptr)} "
                                      f"on GPU {gpu_id}: {info.get('segment_id')} "
                                      f"@ {hex(seg_base)}")
@@ -553,6 +557,47 @@ class VRAMMetadataIPCServer:
                 return True
             except Exception as e:
                 logger.error(f"Failed to register segment IPC handle: {e}")
+                return False
+    
+    def unregister_segment_ipc_handle(self, segment_id: str, buffer_pointer: int, gpu_id: int) -> bool:
+        """
+        Unregister a previously registered segment IPC handle.
+        
+        Args:
+            segment_id: Unique segment identifier
+            buffer_pointer: Base GPU memory address of the segment
+            gpu_id: GPU device ID
+            
+        Returns:
+            True if unregistration successful, False otherwise
+        """
+        with self.lock:
+            try:
+                # Create composite key for lookup
+                composite_key = (gpu_id, int(buffer_pointer))
+                
+                # Check if the segment exists
+                if composite_key not in self.segment_ipc_handles:
+                    logger.warning(f"No registered segment IPC handle found for "
+                                  f"segment {segment_id} @ GPU{gpu_id}:{hex(buffer_pointer)}")
+                    return False
+                
+                # Verify segment_id matches
+                stored_info = self.segment_ipc_handles[composite_key]
+                if stored_info.get('segment_id') != segment_id:
+                    logger.warning(f"Segment ID mismatch for unregistration: "
+                                  f"expected {stored_info.get('segment_id')}, got {segment_id}")
+                    return False
+                
+                # Remove the segment from registry
+                del self.segment_ipc_handles[composite_key]
+                
+                logger.info(f"Unregistered segment IPC handle: {segment_id} "
+                           f"@ GPU{gpu_id}:{hex(buffer_pointer)}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to unregister segment IPC handle: {e}")
                 return False
             
     def _deserialize_key(self, key_dict: Dict) -> CacheEngineKey:

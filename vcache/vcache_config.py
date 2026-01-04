@@ -25,11 +25,6 @@ class VCacheConfig:
     # Used by TestCacheEngine for GPU VRAM pool initialization
     enable_gpu_vram_pool: bool = True
     use_vram_metadata_server: bool = True
-    # transfer engine manager
-    local_hostname_TE: str = "localhost"  # For Transfer Engine
-    protocol: str = "rdma"
-    protocol_TE: str = "nvlink"  # For Transfer Engine
-    device_name: str = "mlx5_0"
     
     # Used by GPUVRAMPoolManager
     max_gpu_vram_metadata_size: int = 10000
@@ -37,21 +32,32 @@ class VCacheConfig:
     # GPU VRAM Segment Management
     gpu_vram_segment_size_mb: int = 631242752
     enable_gpu_vram_segments: bool = True
-    metadata_server: str = "http://127.0.0.1:8080/metadata"
     
     # Used by MooncakeStorageBackend
     local_hostname: str = "localhost"
-    mc_metadata_server: str = "http://127.0.0.1:8080/metadata"
     global_segment_size: int = 3200  # MB
     local_buffer_size: int = 512    # MB
     master_server_address: str = "127.0.0.1:50051"
+    metadata_server: str = "http://127.0.0.1:8080/metadata"
 
+    # VRAM Metadata IPC Server
     vram_metadata_ipc_address: str = "192.168.1.86"
     vram_metadata_ipc_port:int = 9091
 
-    gpu_id: int = 0  # GPU ID for Transfer Engine
-    
-    
+    # TransferEngineManager
+    transfer_engine_type: str = "nvlink"
+    gpu_id: int = 0
+
+    # nvlink_transfer_engine
+    max_concurrent_transfers: int = 8
+    transfer_timeout_sec: int = 30
+
+    # mooncake_transfer_engine
+    local_hostname_TE: str = "localhost"  
+    protocol: str = "rdma"
+    protocol_TE: str = "nvlink" 
+    device_name: str = "mlx5_0"
+
     @staticmethod
     def from_defaults() -> "VCacheConfig":
         """Create VCacheConfig with default values."""

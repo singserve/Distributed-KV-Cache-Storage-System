@@ -1,10 +1,7 @@
 
 from dataclasses import dataclass
 import threading
-import time
-import os
-import torch
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 
 logger = init_logger(__name__)
 
@@ -16,14 +13,22 @@ except ImportError:
     CUPY_AVAILABLE = False
     logger.warning("CuPy not available")
 
-# NVLINK Transfer Engine imports
+# Transfer Engine imports
 try:
-    from vcache.nvlink_transfer_engine import DistributedNVLINKTransferEngine
-    TRANSFER_ENGINE_AVAILABLE = True
+    from vcache.transfer_engine.nvlink_transfer_engine import DistributedNVLINKTransferEngine
+    NVLINK_TRANSFER_ENGINE_AVAILABLE = True
     logger.info("NVLINK transfer engine is available")
 except ImportError:
-    TRANSFER_ENGINE_AVAILABLE = False
-    logger.warning("NVLINK transfer engine not available, cross-GPU transfers disabled")
+    NVLINK_TRANSFER_ENGINE_AVAILABLE = False
+    logger.warning("NVLINK transfer engine not available")
+
+try:
+    from vcache.transfer_engine.mooncake_transfer_engine import MooncakeTransferEngine
+    MOONCAKE_TRANSFER_ENGINE_AVAILABLE = True
+    logger.info("Mooncake transfer engine is available")
+except ImportError:
+    MOONCAKE_TRANSFER_ENGINE_AVAILABLE = False
+    logger.warning("Mooncake transfer engine not available")
 
 class TransferEngineManager:
     """Manages NVLINK transfer engine for cross-GPU data transfers."""
@@ -38,20 +43,33 @@ class TransferEngineManager:
         self._initialize_transfer_engine()
 
     def _initialize_transfer_engine(self):
+        """Initialize transfer engine based on configuration."""
+        # Get engine type from config
+        engine_type = self.config.get_extra_config_value("transfer_engine_type", "nvlink")
+        gpu_id = self.config.get_extra_config_value("gpu_id", 0)
+        
+        logger.info(f"Initializing transfer engine: type={engine_type}, gpu_id={gpu_id}")
+        
+        if engine_type.lower() == "nvlink":
+            self._initialize_nvlink_engine(gpu_id)
+        elif engine_type.lower() == "mooncake":
+            self._initialize_mooncake_engine(gpu_id)
+        else:
+            logger.error(f"Unknown transfer engine type: {engine_type}")
+            # Try to initialize NVLINK as fallback
+            self._initialize_nvlink_engine(gpu_id)
+    
+    def _initialize_nvlink_engine(self, gpu_id: int):
         """Initialize NVLINK transfer engine if available."""
-        if not TRANSFER_ENGINE_AVAILABLE:
-            logger.warning("Transfer engine not available, cross-GPU transfers disabled")
+        if not NVLINK_TRANSFER_ENGINE_AVAILABLE:
+            logger.warning("NVLINK transfer engine not available, cross-GPU transfers disabled")
             return
         
         try:
-            # Get GPU ID from config
-            gpu_id = self.config.get_extra_config_value("gpu_id", 0)
-            
             # Initialize NVLINK transfer engine, pass IPC client if provided
             self.engine = DistributedNVLINKTransferEngine(
                 config=self.config,
                 gpu_id=gpu_id,
-                segment_manager=None,  # NVLINK engine doesn't need segment registration
                 ipc_client=self.ipc_client
             )
             
@@ -60,6 +78,73 @@ class TransferEngineManager:
                 
         except Exception as e:
             logger.error(f"Error initializing NVLINK transfer engine: {e}")
+    
+    def _initialize_mooncake_engine(self, gpu_id: int):
+        """Initialize Mooncake transfer engine if available."""
+        if not MOONCAKE_TRANSFER_ENGINE_AVAILABLE:
+            logger.warning("Mooncake transfer engine not available, cross-GPU transfers disabled")
+            return
+        
+        try:
+            # Initialize Mooncake transfer engine
+            self.engine = MooncakeTransferEngine(
+                config=self.config,
+                gpu_id=gpu_id,
+                ipc_client=self.ipc_client
+            )
+            
+            self.initialized = True
+            logger.info(f"Mooncake transfer engine initialized successfully for GPU {gpu_id}")
+                
+        except Exception as e:
+            logger.error(f"Error initializing Mooncake transfer engine: {e}")
+
+    def register_segment(self, segment_id: str, base_address: int, gpu_id: int, size: int) -> bool:
+        """
+        Register a GPU memory segment with the metadata server
+        
+        Args:
+            segment_id: Unique segment identifier
+            base_address: Base GPU memory address of the segment
+            gpu_id: GPU device ID
+            size: Segment size in bytes
+            
+        Returns:
+            True if registration successful, False otherwise
+        """
+        if not self.initialized or not self.engine:
+            logger.warning("Transfer engine not available, cannot register segment")
+            return False
+        
+        # Check if engine has register_segment method
+        if hasattr(self.engine, 'register_segment'):
+            return self.engine.register_segment(segment_id, base_address, gpu_id, size)
+        else:
+            logger.warning(f"Engine {type(self.engine).__name__} doesn't have register_segment method")
+            return False
+    
+    def unregister_segment(self, segment_id: str, base_address: int, gpu_id: int) -> bool:
+        """
+        Unregister a GPU memory segment from the metadata server.
+        
+        Args:
+            segment_id: Unique segment identifier
+            base_address: Base GPU memory address of the segment
+            gpu_id: GPU device ID
+            
+        Returns:
+            True if unregistration successful, False otherwise
+        """
+        if not self.initialized or not self.engine:
+            logger.warning("Transfer engine not available, cannot unregister segment")
+            return False
+        
+        # Check if engine has unregister_segment method
+        if hasattr(self.engine, 'unregister_segment'):
+            return self.engine.unregister_segment(segment_id, base_address, gpu_id)
+        else:
+            logger.warning(f"Engine {type(self.engine).__name__} doesn't have unregister_segment method")
+            return False
 
     
     def transfer_gpu_to_gpu(self,  
@@ -68,9 +153,12 @@ class TransferEngineManager:
                             source_buffer, 
                             target_buffer, 
                             size: int,
+                            src_hostname: str = "localhost",
+                            target_hostname: str = "localhost",
                             src_offset: int = 0,
-                            dst_offset: int = 0) -> bool:
-        """Transfer data between GPUs using NVLINK transfer engine.
+                            dst_offset: int = 0,
+                            **kwargs) -> bool:
+        """Transfer data between GPUs using transfer engine.
 
         ipc_handle: when transferring from a remote process allocation,
         pass the serialized cudaIpcMemHandle bytes so the engine can open the handle
@@ -93,32 +181,40 @@ class TransferEngineManager:
                     res = self.ipc_client.get_ipc_mem_handle(source_address, source_gpu)
                     if res:
                         handle_bytes, handle_gpu_id, base_pointer, segment_size = res
-                        if handle_gpu_id != source_gpu:
-                            logger.warning(f"IPC handle GPU id ({handle_gpu_id}) does not match requested source_gpu ({source_gpu})")
                         ipc_handle = handle_bytes
-                        logger.debug(f"Obtained IPC mem handle for source buffer {hex(source_address)} on GPU {source_gpu} via IPC client: segment base {hex(base_pointer)}, size {segment_size}")
+                        logger.debug(f"Obtained IPC mem handle for source buffer {hex(source_address)} "
+                                     f"on GPU {source_gpu} via IPC client: "
+                                     f"segment base {hex(base_pointer)}, "
+                                     f"size {segment_size}")
                 except Exception as e:
                     logger.error(f"Failed to obtain IPC mem handle via IPC client: {e}")
 
-            # Perform synchronous transfer using NVLINK engine
-            success = self.engine.transfer_sync(
+            # Add ipc_handle to kwargs if available
+            if ipc_handle is not None:
+                kwargs['ipc_handle'] = ipc_handle
+
+            # Check if engine has the new transfer_gpu_to_gpu method (with hostname parameters)
+            # Use the new interface with hostname parameters
+            success = self.engine.transfer_gpu_to_gpu(
                 source_gpu=source_gpu,
                 target_gpu=target_gpu,
-                source_address=source_address,
-                target_address=target_address,
+                source_buffer=source_address,
+                target_buffer=target_address,
                 size=size,
-                ipc_handle=ipc_handle,
+                src_hostname=src_hostname,
+                target_hostname=target_hostname,
                 src_offset=src_offset,
-                dst_offset=dst_offset
+                dst_offset=dst_offset,
+                **kwargs
             )
-            
+
             if success:
                 logger.info(f"Cross-GPU transfer successful: "
-                            f"GPU {source_gpu} -> GPU {target_gpu}, "
+                            f"{src_hostname}:GPU {source_gpu} -> {target_hostname}:GPU {target_gpu}, "
                             f"size: {size} bytes")
             else:
                 logger.error(f"Cross-GPU transfer failed: "
-                             f"GPU {source_gpu} -> GPU {target_gpu}")
+                             f"{src_hostname}:GPU {source_gpu} -> {target_hostname}:GPU {target_gpu}")
             
             return success
                 

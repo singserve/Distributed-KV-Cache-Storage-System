@@ -11,7 +11,7 @@ import time
 import pickle
 import numpy as np
 import torch
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from vcache_config import VCacheConfig
 
 logger = init_logger(__name__)

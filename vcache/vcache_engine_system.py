@@ -2,15 +2,12 @@
 VCache Engine System
 """
 
-# Standard
 from typing import Any, Dict, List, Optional, Tuple
-import os
-# Third Party
 import torch
 
-# First Party
+
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
 from lmcache.vcache.vcache_config import VCacheConfig
 from lmcache.v1.gpu_connector import GPUConnectorInterface
@@ -22,15 +19,9 @@ from lmcache.vcache.vram_metadata_ipc_client import get_vram_metadata_ipc_client
 from lmcache.vcache.token_database import TokenDatabase
 from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
 from lmcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
+from lmcache.utils import TORCH_DTYPE_TO_STR_DTYPE
 
 logger = init_logger(__name__)
-
-try:
-    TRANSFER_ENGINE_AVAILABLE = True
-    logger.info("Mooncake store and transfer engine are available")
-except ImportError:
-    TRANSFER_ENGINE_AVAILABLE = False
-    logger.warning("Mooncake store and transfer engine not available")
 
 class VCacheEngine:
     """
@@ -88,11 +79,10 @@ class VCacheEngine:
         self.transfer_engine_manager = None
         # Only initialize transfer engine for worker role
         if connector_role == "worker":
-            if TRANSFER_ENGINE_AVAILABLE:
-                self.transfer_engine_manager = TransferEngineManager(self.config, ipc_client=self.vram_metadata_client)
-                if self.transfer_engine_manager is None:
-                    logger.error("Failed to initialize transfer engine manager")
-                    raise RuntimeError("Transfer engine must be initialized if enabled")
+            self.transfer_engine_manager = TransferEngineManager(self.config, ipc_client=self.vram_metadata_client)
+            if self.transfer_engine_manager is None:
+                logger.error("Failed to initialize transfer engine manager")
+                raise RuntimeError("Transfer engine must be initialized if enabled")
             else:
                 logger.error("Transfer engine not available")
                 raise RuntimeError("Transfer engine must be available for worker role")
@@ -108,8 +98,7 @@ class VCacheEngine:
                 self.segment_manager = GPUVRAMSegmentManager(
                     self.config, 
                     self.metadata.worker_id, 
-                    self.transfer_engine_manager,  # Pass transfer engine manager for segment buffer registration
-                    self.vram_metadata_client  # Pass GPU VRAM Pool Manager client for metadata registration
+                    self.transfer_engine_manager  # Pass transfer engine manager for segment buffer registration
                 )
                 if self.segment_manager is None:
                     logger.error("Failed to initialize GPU VRAM segment manager")
@@ -380,7 +369,6 @@ class VCacheEngine:
         all_chunks = []
         # Convert torch.dtype to string using TORCH_DTYPE_TO_STR_DTYPE mapping
         # This ensures consistency with CacheEngineKey's internal representation
-        from lmcache.utils import TORCH_DTYPE_TO_STR_DTYPE
         kv_dtype_str = TORCH_DTYPE_TO_STR_DTYPE.get(self.metadata.kv_dtype, "half")
         for start, end, cache_key in self.token_database.process_tokens(
             tokens=tokens, 
@@ -1038,7 +1026,6 @@ class VCacheEngine:
         # Process tokens to generate cache keys using class member token_database
         all_chunks = []
         # Convert torch.dtype to string using TORCH_DTYPE_TO_STR_DTYPE mapping
-        from lmcache.utils import TORCH_DTYPE_TO_STR_DTYPE
         kv_dtype_str = TORCH_DTYPE_TO_STR_DTYPE.get(self.metadata.kv_dtype, "half")
         for start, end, cache_key in self.token_database.process_tokens(
             tokens=tokens, 
@@ -1373,7 +1360,6 @@ class VCacheEngine:
         # Generate all possible chunks and prefix chunks
         all_chunks = []
         # Convert torch.dtype to string using TORCH_DTYPE_TO_STR_DTYPE mapping
-        from lmcache.utils import TORCH_DTYPE_TO_STR_DTYPE
         kv_dtype_str = TORCH_DTYPE_TO_STR_DTYPE.get(self.metadata.kv_dtype, "half")
         for start, end, cache_key in self.token_database.process_tokens(
             tokens=tokens, 

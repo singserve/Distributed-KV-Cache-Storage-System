@@ -8,7 +8,7 @@ import time
 import torch
 
 # First Party
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import CacheEngineKey
 
 logger = init_logger(__name__)
