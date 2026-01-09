@@ -11,7 +11,7 @@ import torch
 
 
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.utils import CacheEngineKey
+from lmcache.vcache.utils import VCacheKey
 from lmcache.vcache.token_database import TokenDatabase
 
 logger = init_logger(__name__)
@@ -51,15 +51,8 @@ class MooncakeLookupClient:
             kv_dtype = vllm_config.cache_config.cache_dtype
         
         # Convert torch dtype to string format expected by TokenDatabase
-        kv_dtype_str = "float16"  # Default
-        if kv_dtype == torch.float16:
-            kv_dtype_str = "float16"
-        elif kv_dtype == torch.float32:
-            kv_dtype_str = "float32"
-        elif kv_dtype == torch.bfloat16:
-            kv_dtype_str = "bfloat16"
-        else:
-            kv_dtype_str = str(kv_dtype).replace("torch.", "")
+        from lmcache.vcache.utils import dtype_to_str
+        kv_dtype_str = dtype_to_str(kv_dtype)
         
         # Calculate KV shape
         num_layer = model_config.get_num_layers(parallel_config)

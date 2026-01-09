@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lmcache.vcache.gpu_vram_segment_manager import GPUVRAMSegmentManager, GPUVRAMSegment, MemoryBlock
 from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
-from lmcache.utils import CacheEngineKey
+from lmcache.vcache.utils import VCacheKey
 
 class MockConfig:
     """Mock configuration for testing."""

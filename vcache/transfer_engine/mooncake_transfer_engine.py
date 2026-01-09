@@ -12,7 +12,7 @@ import os
 import torch
 
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
+from lmcache.vcache.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
 
@@ -32,7 +32,11 @@ class MooncakeTransferEngine(TransferEngineInterface):
     This engine uses Mooncake's transfer engine for cross-GPU data transfers
     """
     
-    def __init__(self, config, gpu_id: int, ipc_client=None):
+    def __init__(self, 
+        config, 
+        gpu_id: int, 
+        ipc_client=None
+    ):
         """
         Initialize Mooncake transfer engine for a specific GPU.
         
@@ -95,7 +99,12 @@ class MooncakeTransferEngine(TransferEngineInterface):
         except Exception as e:
             logger.error(f"Error initializing Mooncake transfer engine: {e}")
 
-    def register_segment(self, segment_id: str, base_address: int, gpu_id: int, size: int) -> bool:
+    def register_segment(self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int, 
+        size: int
+    ) -> bool:
         """
         Register a GPU memory segment with the transfer engine.
         
@@ -137,7 +146,12 @@ class MooncakeTransferEngine(TransferEngineInterface):
             logger.error(f"Exception registering segment {segment_id}: {e}")
             return False
     
-    def unregister_segment(self, segment_id: str, base_address: int, gpu_id: int) -> bool:
+    def unregister_segment(
+        self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int
+    ) -> bool:
         """
         Unregister a GPU memory segment from the transfer engine.
         

@@ -310,8 +310,6 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         blocked_kv_data: torch.Tensor,
         vllm_kvcaches: List[torch.Tensor],
         slot_mapping: torch.Tensor,
-        start: int,
-        end: int,
         **kwargs
     ) -> None:
         """
@@ -321,13 +319,15 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             blocked_kv_data: KV cache
                             - [num_layers, num_blocks, 2, block_size, num_kv_heads, head_size]
             vllm_kvcaches: vLLM KV cache list
-            slot_mapping: slot mapping tensor
-            start: 
-            end: 
+            slot_mapping: slot mapping tensor (already sliced for the chunk)
             **kwargs: 
         """
+        # token：num_blocks * block_size
+        num_blocks = blocked_kv_data.shape[1]
+        num_tokens = num_blocks * self.block_size
+        
         # 1. convert to Flash Attention
-        flash_attention_tensor = self._convert_to_flash_attention_format(blocked_kv_data, start, end)
+        flash_attention_tensor = self._convert_to_flash_attention_format(blocked_kv_data, 0, num_tokens)
         
         logger.debug(f"Converted to Flash Attention format: {blocked_kv_data.shape} -> {flash_attention_tensor.shape}")
         
@@ -342,20 +342,9 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             logger.debug(f"Pointers not initialized for device {device}, initializing now")
             kv_cache_pointers = self._initialize_pointers(vllm_kvcaches)
         
-        # 3. check slot_mapping valid
-        if start >= len(slot_mapping) or end > len(slot_mapping):
-            raise ValueError(
-                f"slot_mapping out of bounds: start={start}, end={end}, "
-                f"slot_mapping length={len(slot_mapping)}"
-            )
-        
-        # 4. get slot mapping slice
-        slot_mapping_slice = slot_mapping[start:end]
-        logger.debug(f"Upload blocked KV: start={start}, end={end}, num_tokens={end-start}")
-        
         # check slot_mapping in page_buffer_size
-        if len(slot_mapping_slice) > 0:
-            max_slot = slot_mapping_slice.max().item()
+        if len(slot_mapping) > 0:
+            max_slot = slot_mapping.max().item()
             if max_slot >= self.page_buffer_size:
                 raise ValueError(
                     f"slot_mapping out of bound: "
@@ -365,7 +354,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         lmc_ops.multi_layer_kv_transfer(
             flash_attention_tensor,     # [2, num_layers, num_tokens, hidden_dim]
             kv_cache_pointers,          # kv cache ptrs
-            slot_mapping_slice,         # slot mapping
+            slot_mapping,               # slot mapping (already sliced)
             self.device,
             self.page_buffer_size,
             False,                      # direction=False (to vllm)
@@ -375,7 +364,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         torch.cuda.synchronize(self.device)
         
         logger.info(
-            f"Upload completed: {end-start} tokens (start={start}, end={end}) "
+            f"Upload completed: {num_tokens} tokens "
             f"for all {self.num_layers} layers"
         )
     
@@ -383,8 +372,6 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         self,
         vllm_kvcaches: List[torch.Tensor],
         slot_mapping: torch.Tensor,
-        start: int,
-        end: int,
         dtype: torch.dtype = torch.float16,
         device: Optional[torch.device] = None,
         **kwargs
@@ -394,9 +381,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         
         Args:
             vllm_kvcaches: vLLM KV cache list
-            slot_mapping: slot mapping tensor
-            start: 
-            end: 
+            slot_mapping: slot mapping tensor (already sliced for the chunk)
             dtype: tensor dtype
             device: output tensor device
             **kwargs:
@@ -421,7 +406,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             logger.info(f"Pointers not initialized for device {vllm_kvcaches[0].device}, initializing now in download")
             kv_cache_pointers = self._initialize_pointers(vllm_kvcaches)
         
-        num_tokens = end - start
+        num_tokens = len(slot_mapping)
         num_blocks = num_tokens // self.block_size
         if num_tokens % self.block_size != 0:
             logger.warning(
@@ -441,16 +426,9 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             device=vllm_kvcaches[0].device
         )
         
-        if start >= len(slot_mapping) or end > len(slot_mapping):
-            raise ValueError(
-                f"slot_mapping out of bounds: start={start}, end={end}, "
-                f"slot_mapping length={len(slot_mapping)}"
-            )
-        
-        slot_mapping_slice = slot_mapping[start:end]
-        if len(slot_mapping_slice) > 0:
-            min_slot = slot_mapping_slice.min().item()
-            max_slot = slot_mapping_slice.max().item()
+        if len(slot_mapping) > 0:
+            min_slot = slot_mapping.min().item()
+            max_slot = slot_mapping.max().item()
             if max_slot >= self.page_buffer_size:
                 raise ValueError(
                     f"slot_mapping out of bound: max_slot={max_slot} >= page_buffer_size={self.page_buffer_size}"
@@ -460,7 +438,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         lmc_ops.multi_layer_kv_transfer(
             temp_flash_buffer,          # output Flash Attention
             kv_cache_pointers,          # kvcache ptr
-            slot_mapping_slice,         # slot mapping
+            slot_mapping,         # slot mapping
             vllm_kvcaches[0].device,    # GPU device
             self.page_buffer_size,      
             True,                       # direction=True (vllm ->)
@@ -478,7 +456,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             blocked_6d = blocked_6d.to(device)
         
         logger.info(
-            f"Download completed: {num_tokens} tokens (start={start}, end={end}) "
+            f"Download completed: {num_tokens} tokens "
             f"for all {self.num_layers} layers"
         )
         
@@ -489,8 +467,6 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         blocked_kv_data_list: List[torch.Tensor],
         vllm_kvcaches: List[torch.Tensor],
         slot_mapping_list: List[torch.Tensor],
-        starts: List[int],
-        ends: List[int],
         **kwargs
     ) -> None:
         """
@@ -500,34 +476,37 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
             blocked_kv_data_list: blocked KV cache list：
                                  - [num_layers, num_blocks, 2, block_size, num_kv_heads, head_size]
             vllm_kvcaches: vLLM KV cache list
-            slot_mapping_list: slot mapping tensor list
-            starts: start token idx list
-            ends: 
+            slot_mapping_list: slot mapping tensor list (already sliced for each chunk)
             **kwargs: 
         """
-        assert len(blocked_kv_data_list) == len(slot_mapping_list) == len(starts) == len(ends), \
-            "All input lists must have the same length"
+        assert len(blocked_kv_data_list) == len(slot_mapping_list), \
+            "blocked_kv_data_list and slot_mapping_list must have the same length"
         
         logger.debug(f"Batch upload: {len(blocked_kv_data_list)} chunks")
         
         with torch.cuda.stream(self.load_stream):
-            for idx, (blocked_kv_data, slot_mapping, start, end) in enumerate(zip(
-                blocked_kv_data_list, slot_mapping_list, starts, ends, strict=False
+            for idx, (blocked_kv_data, slot_mapping) in enumerate(zip(
+                blocked_kv_data_list, slot_mapping_list, strict=False
             )):
-                logger.debug(f"Processing chunk {idx}: start={start}, end={end}, tokens={end-start}")
+                # token：num_blocks * block_size
+                num_blocks = blocked_kv_data.shape[1]
+                num_tokens = num_blocks * self.block_size
+                logger.debug(f"Processing chunk {idx}: {num_tokens} tokens")
                 
                 self.upload_blocked_kv(
                     blocked_kv_data=blocked_kv_data,
                     vllm_kvcaches=vllm_kvcaches,
                     slot_mapping=slot_mapping,
-                    start=start,
-                    end=end,
                     **kwargs
                 )
         
         self.load_stream.synchronize()
         
-        total_tokens = sum(end - start for start, end in zip(starts, ends, strict=False))
+        total_tokens = 0
+        for blocked_kv_data in blocked_kv_data_list:
+            num_blocks = blocked_kv_data.shape[1]
+            total_tokens += num_blocks * self.block_size
+        
         logger.debug(
             f"Batch upload completed: {len(blocked_kv_data_list)} batches, "
             f"{total_tokens} total tokens for all {self.num_layers} layers"
@@ -537,8 +516,6 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         self,
         vllm_kvcaches: List[torch.Tensor],
         slot_mapping_list: List[torch.Tensor],
-        starts: List[int],
-        ends: List[int],
         dtype: torch.dtype = torch.float16,
         device: Optional[torch.device] = None,
         **kwargs
@@ -548,9 +525,7 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         
         Args:
             vllm_kvcaches: vLLM KV cache list
-            slot_mapping_list: slot mapping tensor list
-            starts: start token idx list
-            ends: 
+            slot_mapping_list: slot mapping tensor list (already sliced for each chunk)
             dtype: output tensor dytpe
             device: 
             **kwargs: 
@@ -558,24 +533,22 @@ class BlockedKVPagedMemConnector(GPUConnectorInterface):
         Returns:
             blocked KV cache list [num_layers, num_blocks, 2, block_size, num_kv_heads, head_size]
         """
-        assert len(slot_mapping_list) == len(starts) == len(ends), \
-            "All input lists must have the same length"
-        
         results = []
         
-        for slot_mapping, start, end in zip(slot_mapping_list, starts, ends, strict=False):
+        for slot_mapping in slot_mapping_list:
             blocked_6d = self.download_blocked_kv(
                 vllm_kvcaches=vllm_kvcaches,
                 slot_mapping=slot_mapping,
-                start=start,
-                end=end,
                 dtype=dtype,
                 device=device,
                 **kwargs
             )
             results.append(blocked_6d)
         
-        total_tokens = sum(end - start for start, end in zip(starts, ends, strict=False))
+        total_tokens = 0
+        for slot_mapping in slot_mapping_list:
+            total_tokens += len(slot_mapping)
+        
         logger.info(
             f"Batch download completed: {len(results)} batches, "
             f"{total_tokens} total tokens for all {self.num_layers} layers"

@@ -7,12 +7,11 @@ for KV cache storage and retrieval.
 
 
 from typing import Dict, List, Optional, Tuple, Union
-import time
 import pickle
 import numpy as np
 import torch
 from lmcache.vcache.vcache_logging import init_logger
-from vcache_config import VCacheConfig
+from lmcache.vcache.vcache_config import VCacheConfig
 
 logger = init_logger(__name__)
 
@@ -128,9 +127,12 @@ class MooncakeStorageBackend:
         
         return default
     
-    def retrieve(self, 
-                 cache_key, 
-                 tokens: List[int], **kwargs) -> Tuple[List[int], torch.Tensor]:
+    def retrieve(
+        self, 
+        cache_key, 
+        tokens: List[int], 
+        **kwargs
+    ) -> Tuple[List[int], torch.Tensor]:
         """
         Retrieve KV cache data from Mooncake store using the provided cache key and tokens.
         
@@ -141,7 +143,7 @@ class MooncakeStorageBackend:
         4. Return tokens and KV cache tensor
         
         Args:
-            cache_key: Cache key (CacheEngineKey, int, or str) used to retrieve the data
+            cache_key: Cache key (VCacheKey, int, or str) used to retrieve the data
             tokens: List of token IDs or torch.Tensor for verification
             **kwargs: Additional arguments for future extension
             
@@ -266,7 +268,7 @@ class MooncakeStorageBackend:
         Args:
             tokens: List of token IDs
             kvcaches: tensor containing chunk KV cache data
-            cache_key: CacheEngineKey for consistent key generation (optional)
+            cache_key: VCacheKey for consistent key generation (optional)
                 
         Returns:
             True if store successful, False otherwise
@@ -319,9 +321,11 @@ class MooncakeStorageBackend:
             return False
 
     
-    def lookup(self, 
-               tokens: List[int], 
-               all_chunks: Optional[List[Tuple[int, int, any]]] = None) -> Tuple[int, Optional[List[Tuple[int, int, any]]]]:
+    def lookup(
+        self, 
+        tokens: List[int], 
+        all_chunks: Optional[List[Tuple[int, int, any]]] = None
+    ) -> Tuple[int, Optional[List[Tuple[int, int, any]]]]:
         """
         lookup KV cache in Mooncake store.
         Only returns continuous hits from the beginning (start=0).
@@ -358,11 +362,12 @@ class MooncakeStorageBackend:
                 break
             
             chunk_tokens = tokens[start:end]
-            logger.debug(f"Checking Mooncake storage for continuous chunk [{start}, {end}): {len(chunk_tokens)} tokens")
+            logger.debug(f"Checking Mooncake storage for continuous chunk [{start}, {end}): "
+                         f"{len(chunk_tokens)} tokens")
             
             # Use cache_key to check if chunk exists in Mooncake store
             if hasattr(cache_key, 'chunk_hash'):
-                # Use chunk_hash for LayerCacheEngineKey objects
+                # Use chunk_hash for VCacheKey objects
                 key_str = str(cache_key.chunk_hash)
             else:
                 key_str = str(cache_key)

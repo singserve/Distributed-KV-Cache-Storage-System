@@ -14,7 +14,7 @@ import torch
 
 from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMEntry
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.utils import CacheEngineKey
+from lmcache.vcache.utils import VCacheKey
 
 logger = init_logger(__name__)
 
@@ -120,7 +120,7 @@ class VRAMMetadataIPCClient:
     def lookup_prefix(
         self,
         token_ids: List[int],
-        all_chunks: Optional[List[Tuple[int, int, CacheEngineKey]]] = None,
+        all_chunks: Optional[List[Tuple[int, int, VCacheKey]]] = None,
         current_gpu_id: Optional[int] = None,
     ) -> Tuple[int, Optional[List[Tuple[Tuple[int, int], int, bool]]]]:
         """
@@ -169,7 +169,7 @@ class VRAMMetadataIPCClient:
 
     def register_kvcache(
         self,
-        cache_key: CacheEngineKey,
+        cache_key: VCacheKey,
         token_ids: List[int],
         gpu_id: int,
         tensor_shape: tuple,
@@ -225,7 +225,7 @@ class VRAMMetadataIPCClient:
 
     def batch_register_kvcache(
         self,
-        entries_data: List[Tuple[CacheEngineKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str], int]]
+        entries_data: List[Tuple[VCacheKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str], int]]
     ) -> List[bool]:
         """
         batch register KV cache to GPU VRAM pool metadata
@@ -294,7 +294,7 @@ class VRAMMetadataIPCClient:
                 logger.error(f"IPC batch_register_kvcache failed: {e}")
                 return [False] * len(entries_data)
 
-    def get_entry(self, key: CacheEngineKey) -> Optional[object]:
+    def get_entry(self, key: VCacheKey) -> Optional[object]:
         """
         Get metadata entry by delegating to VRAM metadata IPC server.
         Returns a GPUVRAMEntry object.
@@ -439,9 +439,6 @@ class VRAMMetadataIPCClient:
             try:
                 self._ensure_connection()
                 
-                # First, we need to register the unregister method with the manager
-                # Since we haven't registered it yet, we need to check if it's available
-                # We'll try to call it and handle the case where it doesn't exist
                 try:
                     res_proxy = self.server_proxy.unregister_segment_ipc_handle(segment_id, buffer_pointer, gpu_id)
                     if hasattr(res_proxy, '_getvalue'):
@@ -469,7 +466,7 @@ class VRAMMetadataIPCClient:
                 logger.error(f"IPC unregister_segment_ipc_handle failed: {e}")
                 return False
 
-    def batch_get_entry(self, keys: List[CacheEngineKey]) -> List[Optional[object]]:
+    def batch_get_entry(self, keys: List[VCacheKey]) -> List[Optional[object]]:
         """
         batch get metadata entries by delegating to VRAM metadata IPC server.
         Returns a list of GPUVRAMEntry objects or None.
@@ -540,7 +537,7 @@ class VRAMMetadataIPCClient:
                 logger.error(f"IPC batch_get_entry failed: {e}")
                 return [None] * len(keys)
 
-    def remove(self, key: CacheEngineKey) -> bool:
+    def remove(self, key: VCacheKey) -> bool:
         """Remove metadata entry by delegating to VRAM metadata IPC server."""
         with self.lock:
             self.total_requests += 1
@@ -618,40 +615,32 @@ class VRAMMetadataIPCClient:
             logger.error(f"IPC shutdown_server failed: {e}")
             return False
 
-    def _serialize_key(self, key: CacheEngineKey) -> Dict:
-        """Serialize CacheEngineKey to dictionary for IPC transmission."""
+    def _serialize_key(self, key: VCacheKey) -> Dict:
+        """Serialize VCacheKey to dictionary for IPC transmission."""
         return {
             'fmt': key.fmt,
             'model_name': key.model_name,
-            'world_size': key.world_size,
-            'worker_id': key.worker_id,
             'chunk_hash': key.chunk_hash,
             'dtype': str(key.dtype)
         }
 
-    def _deserialize_key(self, key_dict: Dict) -> CacheEngineKey:
-        """Deserialize dictionary to CacheEngineKey."""
+    def _deserialize_key(self, key_dict: Dict) -> VCacheKey:
+        """Deserialize dictionary to VCacheKey."""
         dtype = self._deserialize_dtype(key_dict.get('dtype', 'torch.float16'))
         
-        return CacheEngineKey(
-            fmt=key_dict.get('fmt', 'pt'),
+        return VCacheKey(
+            fmt=key_dict.get('fmt', 'vllm'),
             model_name=key_dict.get('model_name', 'test_model'),
-            world_size=key_dict.get('world_size', 2),
-            worker_id=key_dict.get('worker_id', 0),
             chunk_hash=key_dict.get('chunk_hash', 0),
             dtype=dtype
         )
 
     def _deserialize_dtype(self, dtype_str: str) -> torch.dtype:
         """Deserialize dtype string to torch.dtype."""
-        dtype_map = {
-            "torch.float16": torch.float16,
-            "torch.float32": torch.float32,
-            "torch.int64": torch.int64,
-        }
-        return dtype_map.get(dtype_str, torch.float16)
+        from lmcache.vcache.utils import str_to_dtype
+        return str_to_dtype(dtype_str)
 
-    def contains(self, key: CacheEngineKey) -> bool:
+    def contains(self, key: VCacheKey) -> bool:
         """Check if key exists in VRAM metadata IPC server."""
         with self.lock:
             self.total_requests += 1

@@ -12,7 +12,7 @@ import ctypes
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
+from lmcache.vcache.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
 
@@ -262,7 +262,7 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
                 logger.error(f"Error in transfer worker: {e}")
                 time.sleep(1.0)
         
-        logger.info("Transfer worker thread stopped")
+        logger.debug("Transfer worker thread stopped")
     
     def _execute_transfer(self, request: TransferRequest):
         """
@@ -338,15 +338,17 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
                 
                 self.completed_transfers[request.request_id] = request
     
-    def _perform_direct_transfer(self, 
-                            source_gpu: int, 
-                            target_gpu: int, 
-                            source_address: int, 
-                            target_address: int, 
-                            size: int,
-                            ipc_handle: Optional[bytes] = None,
-                            src_offset: int = 0,
-                            dst_offset: int = 0):
+    def _perform_direct_transfer(
+        self, 
+        source_gpu: int, 
+        target_gpu: int, 
+        source_address: int, 
+        target_address: int, 
+        size: int,
+        ipc_handle: Optional[bytes] = None,
+        src_offset: int = 0,
+        dst_offset: int = 0
+    ):
         """Perform direct GPU-to-GPU transfer using NVLINK with low-level CUDA APIs.
         This function is asynchronous - it submits the transfer and returns immediately.
         Synchronization is done through the recorded CUDA event.
@@ -458,16 +460,18 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
     
     # ==================== Public API ====================
     
-    def submit_transfer(self, 
-                       source_gpu: int, 
-                       target_gpu: int, 
-                       source_address: int, 
-                       target_address: int, 
-                       size: int,
-                       ipc_handle: Optional[bytes] = None,
-                       src_offset: int = 0,
-                       dst_offset: int = 0,
-                       sync: bool = True) -> str:
+    def submit_transfer(
+        self, 
+        source_gpu: int, 
+        target_gpu: int, 
+        source_address: int, 
+        target_address: int, 
+        size: int,
+        ipc_handle: Optional[bytes] = None,
+        src_offset: int = 0,
+        dst_offset: int = 0,
+        sync: bool = True
+    ) -> str:
         """
         Submit a transfer request to the engine.
         
@@ -571,15 +575,17 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
             dst_offset=dst_offset
         )
     
-    def transfer_sync(self,
-                     source_gpu: int,
-                     target_gpu: int,
-                     source_address: int,
-                     target_address: int,
-                     size: int,
-                     ipc_handle: Optional[bytes] = None,
-                     src_offset: int = 0,
-                     dst_offset: int = 0) -> bool:
+    def transfer_sync(
+        self,
+        source_gpu: int,
+        target_gpu: int,
+        source_address: int,
+        target_address: int,
+        size: int,
+        ipc_handle: Optional[bytes] = None,
+        src_offset: int = 0,
+        dst_offset: int = 0
+    ) -> bool:
         """
         Perform synchronous transfer (blocking).
         
@@ -790,13 +796,15 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
             return status
     
     # need modification here
-    def batch_transfer(self, 
-                      source_gpu: int,
-                      target_gpu: int,
-                      transfers: list,
-                      ipc_handles: Optional[List[bytes]] = None,
-                      src_offsets: Optional[List[int]] = None,
-                      dst_offsets: Optional[List[int]] = None) -> list:
+    def batch_transfer(
+        self, 
+        source_gpu: int,
+        target_gpu: int,
+        transfers: list,
+        ipc_handles: Optional[List[bytes]] = None,
+        src_offsets: Optional[List[int]] = None,
+        dst_offsets: Optional[List[int]] = None
+    ) -> list:
         """
         Batch transfer multiple buffers from source GPU to target GPU.
         
@@ -903,14 +911,16 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         
         return results
     
-    def batch_transfer_sync(self, 
-                           source_gpu: int,
-                           target_gpu: int,
-                           transfers: list,
-                           timeout: float = 30.0,
-                           ipc_handles: Optional[List[bytes]] = None,
-                           src_offsets: Optional[List[int]] = None,
-                           dst_offsets: Optional[List[int]] = None) -> dict:
+    def batch_transfer_sync(
+        self, 
+        source_gpu: int,
+        target_gpu: int,
+        transfers: list,
+        timeout: float = 30.0,
+        ipc_handles: Optional[List[bytes]] = None,
+        src_offsets: Optional[List[int]] = None,
+        dst_offsets: Optional[List[int]] = None
+    ) -> dict:
         """
         Synchronous batch transfer with optimized waiting mechanism.
         
@@ -1087,7 +1097,13 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         
         logger.info("NVLINK transfer engine shutdown completed")
     
-    def register_segment(self, segment_id: str, base_address: int, gpu_id: int, size: int) -> bool:
+    def register_segment(
+        self,
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int, 
+        size: int
+    ) -> bool:
         """
         Register a GPU memory segment with the metadata server 
         by obtaining and registering its IPC handle.
@@ -1144,7 +1160,12 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
             logger.error(f"Error registering segment {segment_id}: {e}")
             return False
     
-    def unregister_segment(self, segment_id: str, base_address: int, gpu_id: int) -> bool:
+    def unregister_segment(
+        self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int
+    ) -> bool:
         """
         Unregister a GPU memory segment from the metadata server.
         

@@ -14,7 +14,7 @@ import ctypes
 
 from lmcache.vcache.vcache_logging import init_logger
 from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
-from lmcache.utils import CacheEngineKey
+from lmcache.vcache.utils import VCacheKey
 
 logger = init_logger(__name__)
 
@@ -78,7 +78,7 @@ class GPUVRAMSegment:
     allocated_blocks_head: Optional[MemoryBlock] = None  # Linked list of allocated blocks
     
     # VRAM Unit management 
-    _vram_units: Dict[Union[str, CacheEngineKey], VRAMKVCacheUnit] = None  # cache_key -> VRAM unit
+    _vram_units: Dict[Union[str, VCacheKey], VRAMKVCacheUnit] = None  # cache_key -> VRAM unit
     
     def __post_init__(self):
         if self.created_time == 0.0:
@@ -435,7 +435,7 @@ class GPUVRAMSegment:
         logger.debug(f"Registered VRAM unit {cache_key} in segment {self.segment_id}")
         return True
     
-    def unregister_vram_unit(self, cache_key: Union[str, CacheEngineKey]) -> bool:
+    def unregister_vram_unit(self, cache_key: Union[str, VCacheKey]) -> bool:
         """
         Unregister a VRAM unit from this segment.
         
@@ -453,7 +453,7 @@ class GPUVRAMSegment:
         logger.debug(f"Unregistered VRAM unit {cache_key} from segment {self.segment_id}")
         return True
     
-    def get_vram_unit(self, cache_key: Union[str, CacheEngineKey]) -> Optional[VRAMKVCacheUnit]:
+    def get_vram_unit(self, cache_key: Union[str, VCacheKey]) -> Optional[VRAMKVCacheUnit]:
         """
         Get a VRAM unit from this segment and update its access time.
         
@@ -487,7 +487,7 @@ class GPUVRAMSegment:
         """
         return len(self._vram_units)
     
-    def get_oldest_vram_unit(self) -> Optional[Tuple[Union[str, CacheEngineKey], VRAMKVCacheUnit]]:
+    def get_oldest_vram_unit(self) -> Optional[Tuple[Union[str, VCacheKey], VRAMKVCacheUnit]]:
         """
         Get the oldest VRAM unit in this segment (LRU).
         
@@ -872,7 +872,7 @@ class GPUVRAMSegmentManager:
     def cleanup_segment(self, segment_id: str) -> bool:
         """
         Clean up a GPU VRAM segment by removing all associated entries and VRAM units on this GPU.
-        this is to clean up segment metadata, actual GPU memory is pre-allocated.
+        Also releases the GPU tensor memory for this segment.
         
         Args:
             segment_id: Segment ID to clean up
@@ -885,15 +885,17 @@ class GPUVRAMSegmentManager:
             logger.warning(f"Segment {segment_id} not found for cleanup on GPU {self.gpu_id}")
             return False
         
-        # clean segment VRAM units
+        success = True
+        
+        # Clean up segment VRAM units
         vram_units = segment.get_all_vram_units()
         for vram_unit in vram_units:
             cache_key = vram_unit.cache_key
-            # free segment memory block
+            # Free segment memory block
             block = segment.get_block_by_offset(vram_unit.segment_offset)
             if block:
                 segment.free(block)
-            # unregister VRAM unit
+            # Unregister VRAM unit
             segment.unregister_vram_unit(cache_key)
         
         # Find and reset the segment
@@ -913,10 +915,28 @@ class GPUVRAMSegmentManager:
                 
                 seg.clear_vram_units()
                 
-                logger.info(f"Cleaned up segment {segment_id} "
+                logger.info(f"Cleaned up segment {segment_id} metadata "
                             f"on GPU {self.gpu_id}, "
                             f"freed all allocated blocks, reset free list, cleared VRAM units")
-                return True
+                
+                # Release GPU tensor memory for this segment
+                if segment_id in self._segment_tensors:
+                    tensor = self._segment_tensors[segment_id]
+                    try:
+                        # Directly delete the GPU tensor to release memory
+                        del tensor
+                        logger.debug(f"Released GPU tensor memory for segment {segment_id}")
+                    except Exception as e:
+                        logger.error(f"Error releasing GPU tensor for segment {segment_id}: {e}")
+                        success = False
+                    finally:
+                        # Remove from dictionary
+                        del self._segment_tensors[segment_id]
+                
+                # Remove segment from segments list
+                self.segments.remove(seg)
+                
+                return success
         
         logger.error(f"Segment {segment_id} not found in GPU segments on GPU {self.gpu_id}")
         return False
@@ -924,7 +944,7 @@ class GPUVRAMSegmentManager:
 
     def create_vram_unit(
         self,
-        cache_key: Union[str, CacheEngineKey],
+        cache_key: Union[str, VCacheKey],
         token_ids: List[int],
         segment_id: str,
         offset: int,
@@ -1020,7 +1040,7 @@ class GPUVRAMSegmentManager:
                 logger.error(f"Failed to register VRAM unit {cache_key} in segment {segment_id}")
                 return None
             
-            logger.info(f"Created VRAM unit for flattened data: {cache_key} at segment {segment_id}, "
+            logger.debug(f"Created VRAM unit for flattened data: {cache_key} at segment {segment_id}, "
                        f"offset {offset}, size {allocated_size} bytes, dtype {dtype}, "
                        f"elements: {num_elements}, original_shape: {original_shape}")
             
@@ -1040,6 +1060,31 @@ class GPUVRAMSegmentManager:
         """
         logger.info(f"Shutting down GPU VRAM segment manager for GPU {self.gpu_id}")
         
-        # Clean up all segments
-        cleanup_success = self.cleanup_all_segments()
-        return cleanup_success
+        success = True
+        
+        # Clean up all segments and release GPU memory
+        # Create a copy of segment IDs to avoid modification during iteration
+        segment_ids = [segment.segment_id for segment in self.segments]
+        
+        for segment_id in segment_ids:
+            try:
+                # Clean up the segment (includes GPU tensor release)
+                segment_success = self.cleanup_segment(segment_id)
+                if not segment_success:
+                    logger.error(f"Failed to clean up segment {segment_id}")
+                    success = False
+                
+            except Exception as e:
+                logger.error(f"Error during shutdown of segment {segment_id}: {e}")
+                success = False
+        
+        # Clear all lists and dictionaries (should already be empty after cleanup_segment)
+        self.segments.clear()
+        self._segment_tensors.clear()
+        
+        if success:
+            logger.info(f"GPU VRAM segment manager shutdown completed for GPU {self.gpu_id}")
+        else:
+            logger.warning(f"GPU VRAM segment manager shutdown completed with errors for GPU {self.gpu_id}")
+        
+        return success

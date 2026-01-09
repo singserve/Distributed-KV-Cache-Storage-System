@@ -8,18 +8,15 @@ import torch
 
 from lmcache.config import LMCacheEngineMetadata
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
+from lmcache.vcache.utils import VCacheKey, dtype_to_str
 from lmcache.vcache.vcache_config import VCacheConfig
 from lmcache.v1.gpu_connector import GPUConnectorInterface
-from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMPoolManager
 from lmcache.vcache.transfer_engine_manager import TransferEngineManager
 from lmcache.vcache.gpu_vram_segment_manager import GPUVRAMSegmentManager
 from lmcache.vcache.mooncake_storage_backend import MooncakeStorageBackend
 from lmcache.vcache.vram_metadata_ipc_client import get_vram_metadata_ipc_client
 from lmcache.vcache.token_database import TokenDatabase
-from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
 from lmcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
-from lmcache.utils import TORCH_DTYPE_TO_STR_DTYPE
 
 logger = init_logger(__name__)
 
@@ -83,9 +80,6 @@ class VCacheEngine:
             if self.transfer_engine_manager is None:
                 logger.error("Failed to initialize transfer engine manager")
                 raise RuntimeError("Transfer engine must be initialized if enabled")
-            else:
-                logger.error("Transfer engine not available")
-                raise RuntimeError("Transfer engine must be available for worker role")
         else:
             logger.info(f"Transfer engine disabled (connector_role={connector_role})")
 
@@ -166,7 +160,14 @@ class VCacheEngine:
                     f"with connector_role={connector_role}")
 
 
-    def _perform_cross_gpu_transfer(self, entry, source_gpu: int, target_gpu: int, target_buffer: Optional[int] = None) -> bool:
+    def _perform_cross_gpu_transfer(
+        self, 
+        entry, 
+        source_gpu: int, 
+        target_gpu: int, 
+        target_buffer: int,
+        target_offset: int
+    ) -> bool:
         """
         Perform synchronous cross-GPU transfer using this Vcache engine's transfer engine.
         
@@ -179,10 +180,6 @@ class VCacheEngine:
         Returns:
             True if transfer successful, False otherwise
         """
-        if not self.transfer_engine_manager:
-            logger.error("Transfer engine not available for cross-GPU transfer")
-            return False
-        
 
         logger.info(f"Starting cross-GPU transfer:" 
                     f"GPU {source_gpu} -> GPU {target_gpu},"
@@ -190,42 +187,14 @@ class VCacheEngine:
         
         # Get the actual tensor data from source GPU using entry's buffer_pointer
         source_buffer = entry.buffer_pointer
-        if source_buffer is None:
-            logger.error(f"Failed to get source buffer address from entry for GPU {source_gpu}")
-            return False
         
         # Get source offset from entry if available
-        src_offset = entry.segment_offset if hasattr(entry, 'segment_offset') else 0
-        
-        # If target_buffer is not provided, allocate one using local segment manager
-        target_offset = 0
-        if target_buffer is None:
-            logger.info("No target buffer provided, allocating using local segment manager")
-            if self.segment_manager is not None:
-                segment_id, target_offset = self.segment_manager.allocate_in_segment(entry.tensor_size)
-                if not segment_id or target_offset is None:
-                    logger.error(f"Failed to allocate segment space "
-                                 f"on GPU {target_gpu} "
-                                 f"for {entry.tensor_size} bytes")
-                    return False
-                
-                # Calculate buffer pointer (base address + offset)
-                target_buffer = self.segment_manager.get_buffer_address(segment_id, target_offset)
-                logger.info(f"Allocated target buffer: {entry.tensor_size} bytes "
-                            f"at address {hex(target_buffer)}"
-                            f"in segment {segment_id}, offset: {target_offset}")
-            else:
-                logger.error("Segment manager not available for buffer allocation")
-                return False
+        src_offset = entry.segment_offset
         
         # Perform actual cross-GPU transfer using transfer engine
         # Use entry's resident hostname as target hostname
-        target_hostname = entry.resident_hostname if hasattr(entry, 'resident_hostname') else None
-
-        if target_hostname is None:
-            logger.error("Target hostname not available in entry for cross-GPU transfer")
-            return False
-        
+        src_hostname = entry.resident_hostname
+        target_hostname=self.config.get_extra_config_value("local_hostname_TE", "localhost")
         # Call transfer manager with correct offset parameters
         success = self.transfer_engine_manager.transfer_gpu_to_gpu(
             source_gpu=source_gpu,
@@ -233,6 +202,8 @@ class VCacheEngine:
             source_buffer=source_buffer,
             target_buffer=target_buffer,
             size=entry.tensor_size,
+            src_hostname=src_hostname,
+            target_hostname=target_hostname,
             src_offset=src_offset,
             dst_offset=target_offset
         )
@@ -251,7 +222,13 @@ class VCacheEngine:
         
 
 
-    def _register_transferred_entry(self, original_entry, target_gpu: int, target_buffer: int, segment_id: Optional[str] = None, segment_offset: int = 0) -> bool:
+    def _register_transferred_entry(self, 
+                                    original_entry, 
+                                    target_gpu: int, 
+                                    target_buffer: int, 
+                                    segment_id: Optional[str] = None, 
+                                    segment_offset: int = 0
+                                    ) -> bool:
         """
         Register a new entry in GPU VRAM pool for the transferred data copy.
         
@@ -300,7 +277,6 @@ class VCacheEngine:
         return success
                 
 
-    @_lmcache_nvtx_annotate
     def retrieve(
         self,
         tokens: List[int],
@@ -367,16 +343,13 @@ class VCacheEngine:
         
         # Generate all chunks using token database with correct parameters
         all_chunks = []
-        # Convert torch.dtype to string using TORCH_DTYPE_TO_STR_DTYPE mapping
-        # This ensures consistency with CacheEngineKey's internal representation
-        kv_dtype_str = TORCH_DTYPE_TO_STR_DTYPE.get(self.metadata.kv_dtype, "half")
+        # Convert torch.dtype to string
+        kv_dtype_str = dtype_to_str(self.metadata.kv_dtype)
         for start, end, cache_key in self.token_database.process_tokens(
             tokens=tokens, 
             mask=mask, 
             make_key=True,
             model_name="test_model",
-            worker_id=self.metadata.worker_id,
-            world_size=self.metadata.world_size,
             kv_dtype=kv_dtype_str
         ):
             all_chunks.append((start, end, cache_key))
@@ -532,7 +505,7 @@ class VCacheEngine:
         kvcaches: List[torch.Tensor],
         slot_mapping: Optional[torch.Tensor],
         ret_mask: torch.Tensor,
-        all_chunks: List[Tuple[int, int, CacheEngineKey]] = None
+        all_chunks: List[Tuple[int, int, VCacheKey]] = None
     ) -> bool:
         """
         Process Mooncake storage hit by retrieving actual KV cache data and placing it in vLLM kvcaches.
@@ -613,9 +586,7 @@ class VCacheEngine:
         # Step 4: Prepare batch upload parameters for GPUConnector
         blocked_kv_data_list = []
         slot_mapping_list = []
-        starts = []
-        ends = []
-        
+
         for start, end, retrieved_tokens, kv_cache_tensor in all_retrieved_data:
             num_tokens = end - start
             logger.debug(f"Preparing Mooncake chunk [{start}, {end}): "
@@ -638,8 +609,6 @@ class VCacheEngine:
             
             blocked_kv_data_list.append(kv_cache_tensor)
             slot_mapping_list.append(chunk_slot_mapping)
-            starts.append(0)  # Start from beginning of each chunk
-            ends.append(num_tokens)  # Upload all tokens in chunk
         
         if not blocked_kv_data_list:
             logger.error("No Mooncake chunks prepared for upload")
@@ -657,9 +626,7 @@ class VCacheEngine:
             self.gpu_connector.batch_upload_blocked_kv(
                 blocked_kv_data_list=blocked_kv_data_list,
                 vllm_kvcaches=kvcaches,
-                slot_mapping_list=slot_mapping_list,
-                starts=starts,
-                ends=ends
+                slot_mapping_list=slot_mapping_list
             )
             
             logger.info(f"Successfully uploaded {len(blocked_kv_data_list)} Mooncake chunks via batch upload")
@@ -686,7 +653,7 @@ class VCacheEngine:
 
     def _process_local_gpu_vram_hits(
         self,
-        local_hits: List[Tuple[int, int, CacheEngineKey, Any]],  # (start, end, cache_key, entry)
+        local_hits: List[Tuple[int, int, VCacheKey, Any]],  # (start, end, cache_key, entry)
         kvcaches: List[torch.Tensor],
         slot_mapping: Optional[torch.Tensor],
         ret_mask: torch.Tensor
@@ -714,8 +681,6 @@ class VCacheEngine:
         # Prepare batch upload parameters
         blocked_kv_data_list = []
         slot_mapping_list = []
-        starts = []
-        ends = []
         
         for start, end, cache_key, _ in local_hits:
             num_tokens = end - start
@@ -750,9 +715,7 @@ class VCacheEngine:
             
             blocked_kv_data_list.append(restored_tensor)
             slot_mapping_list.append(chunk_slot_mapping)
-            starts.append(0)  # Start from beginning of each chunk
-            ends.append(num_tokens)  # Upload all tokens in chunk
-        
+ 
         if not blocked_kv_data_list:
             logger.error("No VRAM units prepared for upload")
             return False
@@ -769,9 +732,7 @@ class VCacheEngine:
             self.gpu_connector.batch_upload_blocked_kv(
                 blocked_kv_data_list=blocked_kv_data_list,
                 vllm_kvcaches=kvcaches,
-                slot_mapping_list=slot_mapping_list,
-                starts=starts,
-                ends=ends
+                slot_mapping_list=slot_mapping_list
             )
             
             logger.info(f"Successfully uploaded {len(blocked_kv_data_list)} chunks in local via batch upload")
@@ -797,7 +758,7 @@ class VCacheEngine:
 
     def _process_remote_gpu_vram_hits(
         self,
-        remote_hits: List[Tuple[int, int, CacheEngineKey, int, Any]],  # (start, end, cache_key, gpu_id, entry)
+        remote_hits: List[Tuple[int, int, VCacheKey, int, Any]],  # (start, end, cache_key, gpu_id, entry)
         kvcaches: List[torch.Tensor],
         slot_mapping: Optional[torch.Tensor],
         ret_mask: torch.Tensor
@@ -824,8 +785,6 @@ class VCacheEngine:
         # Prepare batch upload parameters
         blocked_kv_data_list = []
         slot_mapping_list = []
-        starts = []
-        ends = []
         
         for start, end, cache_key, source_gpu_id, entry in remote_hits:
             num_tokens = end - start
@@ -858,7 +817,8 @@ class VCacheEngine:
                 entry=entry,
                 source_gpu=source_gpu_id,
                 target_gpu=self.metadata.worker_id,
-                target_buffer=segment_address
+                target_buffer=segment_address,
+                target_offset=segment_offset
             )
             
             if not transfer_success:
@@ -872,7 +832,12 @@ class VCacheEngine:
                         f"from GPU {source_gpu_id} to segment space")
             
             # Register transferred entry in GPU VRAM pool
-            register_success = self._register_transferred_entry(entry, self.metadata.worker_id, segment_address, segment_id, segment_offset)
+            register_success = self._register_transferred_entry(entry, 
+                                                                self.metadata.worker_id, 
+                                                                segment_address, 
+                                                                segment_id, 
+                                                                segment_offset
+                                                            )
             
             if not register_success:
                 logger.error(f"Failed to register transferred entry for chunk [{start}, {end})")
@@ -933,9 +898,7 @@ class VCacheEngine:
             
             blocked_kv_data_list.append(restored_tensor)
             slot_mapping_list.append(chunk_slot_mapping)
-            starts.append(0)  # Start from beginning of each chunk
-            ends.append(num_tokens)  # Upload all tokens in chunk
-        
+
         if not blocked_kv_data_list:
             logger.error("No VRAM units prepared for upload after transfer")
             return False
@@ -952,9 +915,7 @@ class VCacheEngine:
             self.gpu_connector.batch_upload_blocked_kv(
                 blocked_kv_data_list=blocked_kv_data_list,
                 vllm_kvcaches=kvcaches,
-                slot_mapping_list=slot_mapping_list,
-                starts=starts,
-                ends=ends
+                slot_mapping_list=slot_mapping_list
             )
             
             logger.info(f"Successfully uploaded {len(blocked_kv_data_list)} transferred chunks via batch upload")
@@ -980,7 +941,6 @@ class VCacheEngine:
             return False
 
 
-    @_lmcache_nvtx_annotate
     def store(
         self,
         tokens: List[int],
@@ -1025,15 +985,13 @@ class VCacheEngine:
         
         # Process tokens to generate cache keys using class member token_database
         all_chunks = []
-        # Convert torch.dtype to string using TORCH_DTYPE_TO_STR_DTYPE mapping
-        kv_dtype_str = TORCH_DTYPE_TO_STR_DTYPE.get(self.metadata.kv_dtype, "half")
+        # Convert torch.dtype to string
+        kv_dtype_str = dtype_to_str(self.metadata.kv_dtype)
         for start, end, cache_key in self.token_database.process_tokens(
             tokens=tokens, 
             mask=mask, 
             make_key=True,
             model_name="test_model",
-            worker_id=self.metadata.worker_id,
-            world_size=self.metadata.world_size,
             kv_dtype=kv_dtype_str
         ):
             all_chunks.append((start, end, cache_key))
@@ -1069,12 +1027,6 @@ class VCacheEngine:
                 first_kv_cache = kvcaches[0]
             
             # vLLM KV Cache shape: (num_blocks, 2, block_size, num_kv_heads, head_size)
-            # Dimension 0: num_blocks (number of blocks)
-            # Dimension 1: 2 (Key and Value)
-            # Dimension 2: block_size (number of tokens per block)
-            # Dimension 3: num_kv_heads (number of KV heads)
-            # Dimension 4: head_size (size of each head)
-            
             if len(first_kv_cache.shape) != 5:
                 logger.error(f"Unsupported KV cache shape: {first_kv_cache.shape}. "
                              f"Only vLLM FlashAttention KV Cache structure (5D) is supported.")
@@ -1173,8 +1125,6 @@ class VCacheEngine:
             combined_tensor = self.gpu_connector.download_blocked_kv(
                 vllm_kvcaches=kvcaches,
                 slot_mapping=chunk_slot_mapping,
-                start=0,  # from beginning of chunk
-                end=len(chunk_tokens),  # to the end of chunk
                 dtype=kv_dtype,
                 device=kvcaches[0].device  # to GPU device
             )
@@ -1184,6 +1134,12 @@ class VCacheEngine:
                             f"device={combined_tensor.device}, dtype={combined_tensor.dtype}")          
             else:
                 logger.error("download_blocked_kv returned None")
+                # Clean up VRAM unit and segment space
+                if vram_kvcache_unit is not None:
+                    # Try to remove VRAM unit from segment
+                    segment = self.segment_manager.get_segment_by_id(segment_id)
+                    if segment:
+                        segment.unregister_vram_unit(cache_key)
                 self.segment_manager.free_segment_space(segment_id, segment_offset, chunk_kv_cache_size)
                 continue
                       
@@ -1198,6 +1154,12 @@ class VCacheEngine:
             if vram_flat_tensor.numel() < flattened_tensor.numel():
                 logger.error(f"VRAM unit tensor size insufficient: "
                              f"{vram_flat_tensor.numel()} < {flattened_tensor.numel()}")
+                # Clean up VRAM unit and segment space
+                if vram_kvcache_unit is not None:
+                    # Try to remove VRAM unit from segment
+                    segment = self.segment_manager.get_segment_by_id(segment_id)
+                    if segment:
+                        segment.unregister_vram_unit(cache_key)
                 self.segment_manager.free_segment_space(segment_id, segment_offset, chunk_kv_cache_size)
                 continue
             else:
@@ -1225,22 +1187,19 @@ class VCacheEngine:
             # Step 6: Store to Mooncake backend - temporarily disabled for debugging
             # combined_tensor: [num_layers, chunk_blocks, 2, block_size, num_kv_heads, head_size]
             # Store the complete tensor with all layers
-            # Temporarily disable Mooncake store to debug hanging issue
             store_success = True
-            logger.debug(f"Mooncake store temporarily disabled for debugging - chunk [{start}, {end})")
             
-            # Original code (commented out for debugging):
-            # store_success = self.storage_backend.store(
-            #     tokens=chunk_tokens,
-            #     kvcaches=combined_tensor,  # Store the complete tensor with all layers
-            #     cache_key=cache_key 
-            # )
-            # 
-            # if store_success:
-            #     logger.debug(f"Successfully stored KV cache for chunk [{start}, {end}): "
-            #                  f"{len(chunk_tokens)} tokens with unified cache key,")
-            # else:
-            #     logger.error(f"Failed to store KV cache for chunk [{start}, {end})")
+            store_success = self.storage_backend.store(
+                tokens=chunk_tokens,
+                kvcaches=combined_tensor,  # Store the complete tensor with all layers
+                cache_key=cache_key 
+            )
+             
+            if store_success:
+                logger.debug(f"Successfully stored KV cache for chunk [{start}, {end}): "
+                             f"{len(chunk_tokens)} tokens with unified cache key,")
+            else:
+                logger.error(f"Failed to store KV cache for chunk [{start}, {end})")
             
             # free combined tensor to release memory
             del combined_tensor
@@ -1253,7 +1212,7 @@ class VCacheEngine:
 
     def _register_to_gpu_vram_pool(
         self, 
-        cache_key: CacheEngineKey, 
+        cache_key: VCacheKey, 
         tokens: List[int], 
         gpu_vram_address: Optional[int] = None, 
         segment_id: Optional[str] = None,
@@ -1339,7 +1298,6 @@ class VCacheEngine:
 
 
 
-    @_lmcache_nvtx_annotate
     def lookup(
         self,
         tokens: List[int],
@@ -1359,15 +1317,13 @@ class VCacheEngine:
         gpu_vram_hit_tokens = 0
         # Generate all possible chunks and prefix chunks
         all_chunks = []
-        # Convert torch.dtype to string using TORCH_DTYPE_TO_STR_DTYPE mapping
-        kv_dtype_str = TORCH_DTYPE_TO_STR_DTYPE.get(self.metadata.kv_dtype, "half")
+        # Convert torch.dtype to string
+        kv_dtype_str = dtype_to_str(self.metadata.kv_dtype)
         for start, end, cache_key in self.token_database.process_tokens(
             tokens=tokens, 
             mask=None, 
             make_key=True,
             model_name="test_model",
-            worker_id=self.metadata.worker_id,
-            world_size=self.metadata.world_size,
             kv_dtype=kv_dtype_str
         ):
             all_chunks.append((start, end, cache_key))
@@ -1456,6 +1412,14 @@ class VCacheEngine:
         """Close the cache engine and release all resources including GPU VRAM segments."""
         logger.info("TestCacheEngine closing and releasing all resources")
         
+        # Shutdown GPU VRAM segment manager if available
+        if self.segment_manager is not None:
+            try:
+                self.segment_manager.shutdown()
+                logger.info("GPU VRAM segment manager shutdown completed")
+            except Exception as e:
+                logger.error(f"Error shutting down GPU VRAM segment manager: {e}")
+        
         # Shutdown VRAM metadata IPC client if available
         if self.vram_metadata_client is not None:
             try:
@@ -1491,3 +1455,7 @@ class VCacheEngine:
                 logger.error(f"Error releasing GPU connector resources: {e}")
         
         logger.info("TestCacheEngine closed and all resources released")
+        
+        
+        
+        

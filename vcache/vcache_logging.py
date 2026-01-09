@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 import threading
 
 # Default log format
-DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 # Log level mapping
@@ -36,7 +36,7 @@ class VCacheLogFormatter(logging.Formatter):
 _loggers = {}
 _default_level = logging.INFO
 _handlers = []
-_lock = threading.Lock()
+_lock = threading.RLock()  
 _initialized = False
 
 def _initialize():
@@ -63,10 +63,9 @@ def _initialize():
         
         _handlers.append(console_handler)
         
-        # Check for log file configuration from environment variables
-        _initialize_from_environment()
-        
         _initialized = True
+    
+    _initialize_from_environment()
 
 def _initialize_from_environment():
     """Initialize logging from environment variables."""

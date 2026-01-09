@@ -18,7 +18,7 @@ import torch
 from lmcache.config import LMCacheEngineMetadata
 from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
-from lmcache.utils import CacheEngineKey, cdiv
+from lmcache.vcache.utils import VCacheKey, cdiv
 from lmcache.vcache.vcache_config import VCacheConfig
 from lmcache.vcache.vcache_engine_system import VCacheEngine, MockGPUConnector
 from lmcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
@@ -54,8 +54,8 @@ def extract_request_configs(sampling_params: SamplingParams) -> Optional[dict]:
     if sampling_params.extra_args is not None:
         if kv_transfer_params := sampling_params.extra_args.get("kv_transfer_params"):
             for k, v in kv_transfer_params.items():
-                # Test system uses test_cache_engine prefix instead of lmcache
-                if k.startswith("test_cache_engine."):
+                # Test system uses vcache_engine prefix
+                if k.startswith("vcache_engine."):
                     if request_configs is None:
                         request_configs = {}
                     # Store with the original key

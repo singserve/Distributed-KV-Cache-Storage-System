@@ -9,17 +9,7 @@ import yaml
 
 @dataclass
 class VCacheConfig:
-    """
-    VCache Configuration for GPU VRAM Pool with Cross-GPU Transfer System
-    
-    Direct attributes for all configuration parameters used by:
-    - VCacheEngine
-    - GPUVRAMPoolManager  
-    - MooncakeStorageBackend
-    """
-    
     # Connector role: "scheduler" or "worker"
-    # Determines which components to initialize
     connector_role: str = "worker"  # "scheduler" or "worker"
     
     # Used by TestCacheEngine for GPU VRAM pool initialization

@@ -12,7 +12,7 @@ from multiprocessing.managers import BaseManager
 import torch
 
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.utils import CacheEngineKey
+from lmcache.vcache.utils import VCacheKey
 from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMPoolManager
 logger = init_logger(__name__)
 
@@ -24,7 +24,7 @@ class VRAMMetadataIPCServer:
     - Provides IPC interface for vcache engine instances
     """
     
-    def __init__(self, config=None, authkey: bytes = b'vram_metadata'):
+    def __init__(self, config, authkey: bytes = b'vram_metadata'):
         self.address = config.get_extra_config_value(
             "vram_metadata_ipc_address", "192.168.1.86"
         )
@@ -32,13 +32,6 @@ class VRAMMetadataIPCServer:
             "vram_metadata_ipc_port", 9091
         )
         self.authkey = authkey
-        
-        # Use provided config or create default config
-        if config is None:
-            from vcache_config import VCacheConfig
-            self.config = VCacheConfig.from_defaults()
-        else:
-            self.config = config
         
         # Import and instantiate the GPU VRAM pool manager using the config       
         self.vram_pool_manager = GPUVRAMPoolManager.get_instance(self.config)
@@ -320,8 +313,6 @@ class VRAMMetadataIPCServer:
                         "key": {
                             'fmt': entry.key.fmt,
                             'model_name': entry.key.model_name,
-                            'world_size': entry.key.world_size,
-                            'worker_id': entry.key.worker_id,
                             'chunk_hash': entry.key.chunk_hash,
                             'dtype': str(entry.key.dtype)
                         },
@@ -334,7 +325,6 @@ class VRAMMetadataIPCServer:
                         "segment_id": entry.segment_id,
                         "segment_offset": entry.segment_offset,
                         "resident_hostname": entry.resident_hostname,
-                        # Add missing fields that client expects
                         "created_time": entry.created_time,
                         "last_access_time": entry.last_access_time,
                         "access_count": entry.access_count,
@@ -383,8 +373,6 @@ class VRAMMetadataIPCServer:
                             "key": {
                                 'fmt': entry.key.fmt,
                                 'model_name': entry.key.model_name,
-                                'world_size': entry.key.world_size,
-                                'worker_id': entry.key.worker_id,
                                 'chunk_hash': entry.key.chunk_hash,
                                 'dtype': str(entry.key.dtype)
                             },
@@ -600,27 +588,21 @@ class VRAMMetadataIPCServer:
                 logger.error(f"Failed to unregister segment IPC handle: {e}")
                 return False
             
-    def _deserialize_key(self, key_dict: Dict) -> CacheEngineKey:
-        """Deserialize key dictionary to CacheEngineKey."""
+    def _deserialize_key(self, key_dict: Dict) -> VCacheKey:
+        """Deserialize key dictionary to VCacheKey."""
         dtype = self._deserialize_dtype(key_dict.get('dtype', 'torch.float16'))
         
-        return CacheEngineKey(
+        return VCacheKey(
             fmt=key_dict.get('fmt', 'pt'),
             model_name=key_dict.get('model_name', 'test_model'),
-            world_size=key_dict.get('world_size', 2),
-            worker_id=key_dict.get('worker_id', 0),
             chunk_hash=key_dict.get('chunk_hash', 0),
             dtype=dtype
         )
 
     def _deserialize_dtype(self, dtype_str: str) -> torch.dtype:
         """Deserialize dtype string to torch.dtype."""
-        dtype_map = {
-            "torch.float16": torch.float16,
-            "torch.float32": torch.float32,
-            "torch.int64": torch.int64,
-        }
-        return dtype_map.get(dtype_str, torch.float16)
+        from lmcache.vcache.utils import str_to_dtype
+        return str_to_dtype(dtype_str)
 
 
 def start_vram_metadata_ipc_server(config=None):

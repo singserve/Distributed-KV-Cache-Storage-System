@@ -73,7 +73,13 @@ class TransferEngineInterface(ABC):
         pass
     
     @abstractmethod
-    def register_segment(self, segment_id: str, base_address: int, gpu_id: int, size: int) -> bool:
+    def register_segment(
+        self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int, 
+        size: int
+    ) -> bool:
         """
         Register a GPU memory segment with the transfer engine.
         
@@ -89,7 +95,12 @@ class TransferEngineInterface(ABC):
         pass
     
     @abstractmethod
-    def unregister_segment(self, segment_id: str, base_address: int, gpu_id: int) -> bool:
+    def unregister_segment(
+        self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int
+    ) -> bool:
         """
         Unregister a GPU memory segment from the transfer engine.
         

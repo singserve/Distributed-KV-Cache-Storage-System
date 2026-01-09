@@ -61,54 +61,7 @@ def generate_kv_cache_paged_list_tensors(
     return ret
 
 
-def check_paged_kv_cache_equal(kvcache1, kvcache2, slot_mapping, device="cuda:0"):
-    """
-    Check if two kvcaches are equal at positions specified by slot_mapping
-    
-    Args:
-        kvcache1: First kvcache list
-        kvcache2: Second kvcache list  
-        slot_mapping: Slot mapping tensor
-        device: Device
-    """
-    num_layers = len(kvcache1)
-    block_size = kvcache1[0].shape[2]  # block_size dimension
-    num_blocks = kvcache1[0].shape[1]  # num_blocks dimension
-    
-    all_match = True
-    max_diff = 0.0
-    
-    # Move kvcache2 to the same device for comparison
-    kvcache2_on_device = []
-    for layer_idx in range(num_layers):
-        kvcache2_on_device.append(kvcache2[layer_idx].to(device))
-    
-    slot_mapping_on_device = slot_mapping.to(device)
-    
-    for token_idx in range(len(slot_mapping_on_device)):
-        slot = slot_mapping_on_device[token_idx].item()
-        block_idx = slot // block_size
-        block_offset = slot % block_size
-        
-        for layer_idx in range(num_layers):
-            # Extract data from same position in both kvcaches
-            data1 = kvcache1[layer_idx][:, block_idx, block_offset, :, :]
-            data2 = kvcache2_on_device[layer_idx][:, block_idx, block_offset, :, :]
-            
-            # Calculate difference
-            diff = torch.abs(data1 - data2)
-            current_max_diff = diff.max().item()
-            max_diff = max(max_diff, current_max_diff)
-            
-            if current_max_diff > 1e-5:
-                print(f"  Token {token_idx}, Layer {layer_idx}: not matched, max diff={current_max_diff}")
-                all_match = False
-    
-    print(f"  Maximum difference across all tokens and layers: {max_diff}")
-    return all_match, max_diff
-
-
-def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_template, ready_event, done_event, result_queue):
+def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_template, ready_event, done_event, result_queue, sample_queue, num_samples_to_check=5):
     """
     Store process: Execute store operation on specified GPU
     
@@ -122,6 +75,8 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
         ready_event: Ready event
         done_event: Done event
         result_queue: Result queue
+        sample_queue: Queue for passing store samples to parent process for comparison
+        num_samples_to_check: Number of samples to check (must match retrieve process)
     """
     try:
         print(f"[Store Process GPU{gpu_id}] Starting store process...")
@@ -170,6 +125,32 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
         
         print(f"[Store Process GPU{gpu_id}] Store completed in {store_time:.4f} seconds")
         
+        # 根据slot mapping保存一些数据样本到队列中，用于后续比较
+        # 我们保存前num_samples_to_check个token对应的slot位置的数据
+        num_samples = min(num_samples_to_check, len(slot_mapping_gpu))
+        store_samples = {}
+        sample_slots = []  # 记录检查了哪些slot
+        
+        for i in range(num_samples):
+            slot = slot_mapping_gpu[i].item()
+            block_idx = slot // block_size
+            block_offset = slot % block_size
+            
+            # 保存这个slot位置的数据
+            # 我们检查第一个layer的第一个head的第一个head_size
+            data = store_kv_cache[0][0, block_idx, block_offset, 0, 0].item()
+            store_samples[f"token_{i}_slot_{slot}"] = data
+            sample_slots.append(slot)
+        
+        # 将样本数据通过队列传递给父进程，用于后续与retrieve数据比较
+        # 同时传递slot信息，确保retrieve检查相同的slot位置
+        sample_queue.put({
+            'store_samples': store_samples,
+            'gpu_id': gpu_id,
+            'sample_slots': sample_slots,  # 传递检查的slot列表
+            'num_samples': num_samples
+        })
+        
         # 通知retrieve进程可以开始
         ready_event.set()
         print(f"[Store Process GPU{gpu_id}] Signaled retrieve process to start")
@@ -187,7 +168,7 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
             'status': 'success',
             'store_time': store_time,
             'store_kv_cache_ptr': hex(store_kv_cache[0].data_ptr()) if store_kv_cache else 'N/A',
-            'store_data_sample': store_kv_cache[0][0, 0, 0, 0, 0].item() if len(store_kv_cache) > 0 else 0.0
+            'store_data_sample': store_kv_cache[0][0, 0, 0, 0, 0].item() if len(store_kv_cache) > 0 else 0.0,
         })
         
         print(f"[Store Process GPU{gpu_id}] Store process completed successfully")
@@ -204,7 +185,7 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
 
 
 def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_template, 
-                     ready_event, done_event, result_queue, store_gpu_id=0):
+                     ready_event, done_event, result_queue, store_gpu_id=0, sample_slots=None):
     """
     Retrieve进程：在指定GPU上执行retrieve操作
     
@@ -219,6 +200,7 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
         done_event: 完成事件
         result_queue: 结果队列
         store_gpu_id: store操作所在的GPU ID
+        sample_slots: 要检查的slot列表（与store进程检查相同的slot）
     """
     try:
         print(f"[Retrieve Process GPU{gpu_id}] Starting retrieve process...")
@@ -278,13 +260,26 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
         print(f"[Retrieve Process GPU{gpu_id}] Retrieve completed in {retrieve_time:.4f} seconds")
         print(f"[Retrieve Process GPU{gpu_id}] Retrieved tokens: {retrieved_tokens}/{len(tokens)}")
         
-        # 注意：这里不能直接与原始模板比较，因为store进程创建了自己的kvcache
-        # 数据完整性验证需要在store进程中保存数据样本，然后在这里比较
-        # 暂时跳过完整性检查，只验证retrieve是否成功
+        # 验证数据：根据sample_slots检查特定的slot位置
+        # 如果没有提供sample_slots，则检查前5个token对应的slot
+        if sample_slots is None:
+            sample_slots = []
+            num_samples = min(5, len(slot_mapping_gpu))
+            for i in range(num_samples):
+                sample_slots.append(slot_mapping_gpu[i].item())
         
-        print(f"[Retrieve Process GPU{gpu_id}] Note: Data integrity check requires store process to share data sample")
+        retrieve_samples = {}
         
-        # 清理资源
+        for i, slot in enumerate(sample_slots):
+            block_idx = slot // block_size
+            block_offset = slot % block_size
+            
+            # 检查这个slot位置的数据
+            # retrieve_kv_cache[0]的形状是 [2, num_blocks, block_size, num_heads, head_size]
+            # 我们检查第一个layer的第一个head的第一个head_size
+            data = retrieve_kv_cache[0][0, block_idx, block_offset, 0, 0].item()
+            retrieve_samples[f"token_{i}_slot_{slot}"] = data
+                # 清理资源
         engine.close()
         
         # 通知store进程已完成
@@ -297,7 +292,9 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
             'retrieve_time': retrieve_time,
             'retrieved_tokens': retrieved_tokens,
             'retrieve_kv_cache_ptr': hex(retrieve_kv_cache[0].data_ptr()) if retrieve_kv_cache else 'N/A',
-            'retrieve_data_sample': retrieve_kv_cache[0][0, 0, 0, 0, 0].item() if len(retrieve_kv_cache) > 0 else 0.0
+            'retrieve_data_sample': retrieve_kv_cache[0][0, 0, 0, 0, 0].item() if len(retrieve_kv_cache) > 0 else 0.0,
+            'retrieve_samples': retrieve_samples,
+            'sample_slots': sample_slots  # 传递检查的slot列表，用于验证
         })
         
         print(f"[Retrieve Process GPU{gpu_id}] Retrieve process completed successfully")
@@ -386,18 +383,25 @@ def test_cross_gpu_store_retrieve():
         
         # 4. 创建测试数据
         print("\n4. Creating test data...")
-        num_blocks = 2
-        num_tokens = num_blocks * block_size  # 32
+        num_blocks = 32  # 512 tokens / 16 block_size = 32 blocks
+        num_tokens = num_blocks * block_size  # 512
         
         # 生成token列表
         tokens = list(range(num_tokens))
         
         # 生成slot mapping数据（CPU上的列表）
+        # 使用随机映射
         slot_mapping_data = random.sample(range(0, num_blocks * block_size), num_tokens)
         
         print(f"Number of tokens: {num_tokens}")
+        print(f"Number of blocks: {num_blocks}")
         print(f"Slot mapping data length: {len(slot_mapping_data)}")
-        print(f"Slot mapping sample: {slot_mapping_data[:5]}...")
+        print(f"Slot mapping sample: {slot_mapping_data[:5]}... (random mapping)")
+        
+        # 决定检查哪些slot（前5个token对应的slot）
+        num_samples_to_check = 5
+        sample_slots = slot_mapping_data[:num_samples_to_check]
+        print(f"Sample slots to check: {sample_slots}")
         
         # 生成KV cache模板（在GPU0上）
         kv_cache_template = generate_kv_cache_paged_list_tensors(
@@ -412,6 +416,7 @@ def test_cross_gpu_store_retrieve():
         ready_event = Event()
         done_event = Event()
         result_queue = Queue()
+        sample_queue = Queue()  # 用于传递store样本数据的队列
         
         # 6. 创建并启动进程
         print("\n6. Starting processes...")
@@ -420,14 +425,14 @@ def test_cross_gpu_store_retrieve():
         store_proc = Process(
             target=store_process,
             args=(0, config_gpu0, metadata_gpu0, tokens, slot_mapping_data, kv_cache_template, 
-                  ready_event, done_event, result_queue)
+                  ready_event, done_event, result_queue, sample_queue, num_samples_to_check)
         )
         
         # Retrieve进程在GPU1上，使用GPU1的配置和metadata
         retrieve_proc = Process(
             target=retrieve_process,
             args=(1, config_gpu1, metadata_gpu1, tokens, slot_mapping_data, kv_cache_template,
-                  ready_event, done_event, result_queue, 0)
+                  ready_event, done_event, result_queue, 0, sample_slots)
         )
         
         # 启动进程
@@ -444,6 +449,11 @@ def test_cross_gpu_store_retrieve():
         results = []
         while not result_queue.empty():
             results.append(result_queue.get())
+        
+        # 从sample_queue获取store的样本数据
+        store_samples_data = None
+        if not sample_queue.empty():
+            store_samples_data = sample_queue.get()
         
         # 9. 分析结果
         print("\n9. Test Results:")
@@ -464,7 +474,6 @@ def test_cross_gpu_store_retrieve():
             print(f"Store Process (GPU0): SUCCESS")
             print(f"  Store time: {store_result['store_time']:.4f} seconds")
             print(f"  Store KV cache address: {store_result.get('store_kv_cache_ptr', 'N/A')}")
-            print(f"  Store data sample: {store_result.get('store_data_sample', 'N/A')}")
         else:
             print(f"Store Process (GPU0): FAILED")
             if store_result and 'error' in store_result:
@@ -474,12 +483,43 @@ def test_cross_gpu_store_retrieve():
         if retrieve_result and retrieve_result['status'] == 'success':
             print(f"Retrieve Process (GPU1): SUCCESS")
             print(f"  Retrieve time: {retrieve_result['retrieve_time']:.4f} seconds")
-            print(f"  Retrieved tokens: {retrieve_result['retrieved_tokens']}/{num_tokens}")
             print(f"  Retrieve KV cache address: {retrieve_result.get('retrieve_kv_cache_ptr', 'N/A')}")
-            print(f"  Retrieve data sample: {retrieve_result.get('retrieve_data_sample', 'N/A')}")
+            print(f"  Retrieved tokens: {retrieve_result.get('retrieved_tokens', 0)}/{num_tokens}")
             
-            print(f"  Note: Store and retrieve use independently generated data")
-            print(f"  Data integrity check requires shared data between processes")
+            # 如果有store样本数据，与retrieve样本数据进行比较
+            if store_samples_data and 'retrieve_samples' in retrieve_result:
+                print(f"\n  Data Comparison (based on slot_mapping):")
+                print(f"  {'Token/Slot':<20} {'Store Value':<15} {'Retrieve Value':<15} {'Match':<10}")
+                print(f"  {'-'*20:<20} {'-'*15:<15} {'-'*15:<15} {'-'*10:<10}")
+                
+                store_samples = store_samples_data['store_samples']
+                retrieve_samples = retrieve_result['retrieve_samples']
+                
+                all_match = True
+                mismatch_count = 0
+                
+                for key in store_samples:
+                    if key in retrieve_samples:
+                        store_val = store_samples[key]
+                        retrieve_val = retrieve_samples[key]
+                        match = abs(store_val - retrieve_val) < 1e-5
+                        
+                        if not match:
+                            all_match = False
+                            mismatch_count += 1
+                        
+                        match_str = "✓" if match else "✗"
+                        print(f"  {key:<20} {store_val:<15.8f} {retrieve_val:<15.8f} {match_str:<10}")
+                
+                print(f"\n  Data Match Summary:")
+                print(f"    All samples match: {'Yes' if all_match else 'No'}")
+                print(f"    Mismatch count: {mismatch_count}")
+                
+                if not all_match:
+                    print(f"  ⚠ Data mismatch detected!")
+                    success = False
+                else:
+                    print(f"  ✓ All data samples match perfectly!")
         else:
             print(f"Retrieve Process (GPU1): FAILED")
             if retrieve_result and 'error' in retrieve_result:
@@ -491,8 +531,6 @@ def test_cross_gpu_store_retrieve():
         print("-" * 40)
         if success:
             print("✓ CROSS-GPU STORE/RETRIEVE TEST PASSED")
-            print("  Data successfully stored on GPU0 and retrieved on GPU1")
-            print("  Two independent cache engines with different configs")
         else:
             print("✗ CROSS-GPU STORE/RETRIEVE TEST FAILED")
         
