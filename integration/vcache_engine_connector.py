@@ -16,13 +16,13 @@ import torch
 
 # First Party
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.logging import init_logger
+from lmcache.vcache.vcache_logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
-from lmcache.utils import CacheEngineKey, cdiv
+from lmcache.vcache.utils import VCacheKey, cdiv
 from lmcache.vcache.vcache_config import VCacheConfig
-from lmcache.vcache.vcache_engine_system import VCacheEngine, MockGPUConnector
-from lmcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
-from lmcache.vcache.mooncake_lookup_client import MooncakeLookupClient
+from lmcache.vcache.vcache.vcache_engine_system import VCacheEngine, MockGPUConnector
+from lmcache.vcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
+from lmcache.vcache.integration.mooncake_lookup_client import MooncakeLookupClient
 
 # vLLM imports
 from vllm.config import VllmConfig
@@ -54,8 +54,8 @@ def extract_request_configs(sampling_params: SamplingParams) -> Optional[dict]:
     if sampling_params.extra_args is not None:
         if kv_transfer_params := sampling_params.extra_args.get("kv_transfer_params"):
             for k, v in kv_transfer_params.items():
-                # Test system uses test_cache_engine prefix instead of lmcache
-                if k.startswith("test_cache_engine."):
+                # Test system uses vcache_engine prefix
+                if k.startswith("vcache_engine."):
                     if request_configs is None:
                         request_configs = {}
                     # Store with the original key
@@ -363,7 +363,7 @@ class VCacheEngineConnectorV1(KVConnectorBase_V1):
             try:
                 # Get master address from config
                 master_addr = self.vcache_config.get_extra_config_value("master_server_address", "127.0.0.1:50051")
-                self.mooncake_lookup_client = MooncakeLookupClient(vllm_config, master_addr)
+                self.mooncake_lookup_client = MooncakeLookupClient(vllm_config, master_addr, self.vcache_config)
                 logger.info(f"MooncakeLookupClient initialized for scheduler role with master address: {master_addr}")
             except ImportError as e:
                 logger.warning(f"Failed to import MooncakeLookupClient: {e}")
@@ -402,12 +402,12 @@ class VCacheEngineConnectorV1(KVConnectorBase_V1):
         
         # Block size for slot mapping
         self._block_size = vllm_config.cache_config.block_size
-        self._chunk_size = 256  # Default chunk size for VCacheEngine
+        self._chunk_size = self.vcache_config.chunk_size  # Configurable chunk size for VCacheEngine
         
         # Events tracking
         self._events: list[Any] = []
         
-        logger.info(f"VCacheEngineConnector initialized for role {role}")
+        logger.info(f"VCacheEngineConnector initialized for role {role} with chunk_size={self._chunk_size}")
     
     def _create_test_config(self, vllm_config: "VllmConfig") -> VCacheConfig:
         """Create VCacheEngine configuration from vLLM config."""
@@ -473,7 +473,7 @@ class VCacheEngineConnectorV1(KVConnectorBase_V1):
         num_layer = model_config.get_num_layers(parallel_config)
         num_kv_head = model_config.get_num_kv_heads(parallel_config)
         head_size = model_config.get_head_size()
-        chunk_size = 256  # Default chunk size
+        chunk_size = self.vcache_config.chunk_size  # Configurable chunk size
         
         kv_shape = (num_layer, 2, chunk_size, num_kv_head, head_size)
         

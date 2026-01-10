@@ -5,7 +5,7 @@ import time
 
 
 from typing import Union
-from lmcache.utils import CacheEngineKey
+from lmcache.vcache.utils import VCacheKey
 
 @dataclass
 class VRAMKVCacheUnit:
@@ -14,7 +14,7 @@ class VRAMKVCacheUnit:
     """
     
     # cache key and token ids
-    cache_key: Union[str, CacheEngineKey]
+    cache_key: Union[str, VCacheKey]
     token_ids: List[int]
     
     # GPU VRAM segment info
@@ -55,11 +55,9 @@ class VRAMKVCacheUnit:
     
     @property
     def cache_key_str(self) -> str:
-        if isinstance(self.cache_key, CacheEngineKey):
-            return self.cache_key.to_string()
         return str(self.cache_key)
     
-    def get_tensor_view(self, device: str = "cuda") -> torch.Tensor:
+    def get_tensor_view(self) -> torch.Tensor:
         return self.kv_cache_tensor
     
     def update_access_time(self) -> None:

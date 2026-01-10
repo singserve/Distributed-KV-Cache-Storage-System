@@ -5,7 +5,7 @@ Token Database
 from typing import List, Optional, Tuple, Union, Iterable, Any
 import torch
 import os
-from lmcache.utils import CacheEngineKey, STR_DTYPE_TO_TORCH_DTYPE
+from lmcache.vcache.utils import VCacheKey
 
 class TokenDatabase:
     """
@@ -85,7 +85,7 @@ class TokenDatabase:
             
         Returns:
             生成器，返回(start, end, key/hash)元组，如果chunk的mask为false则key为None
-            - 当make_key=True时，key是CacheEngineKey对象
+            - 当make_key=True时，key是VCacheKey对象
             - 当make_key=False时，key是int（哈希值）
             - 当chunk被跳过时，key是None
         """
@@ -178,71 +178,29 @@ class TokenDatabase:
         tokens_tuple = tuple(tokens)
         return self.hash_func((prefix_hash, tokens_tuple))
     
-    def _make_cache_key(self, chunk_hash: int, **kwargs) -> "CacheEngineKey":
+    def _make_cache_key(self, chunk_hash: int, **kwargs) -> VCacheKey:
         """
-        根据哈希值生成cache key，使用LMCache的CacheEngineKey格式
+        根据哈希值生成cache key，使用VCacheKey格式
         
         Args:
             chunk_hash: chunk的哈希值
             **kwargs: 其他参数
             
         Returns:
-            CacheEngineKey对象
+            VCacheKey对象
         """
         model_name = kwargs.get('model_name', 'test_model')
-        # 使用固定的worker_id=0，确保相同chunk在不同GPU之间可以共享
-        # 数据不应该绑定到特定的worker_id
-        worker_id = 0  # 固定为0，而不是从kwargs获取
-        world_size = kwargs.get('world_size', 1)
         kv_dtype_str = kwargs.get('kv_dtype', 'float16')
         
-        # 转换dtype字符串为torch.dtype
-        kv_dtype = STR_DTYPE_TO_TORCH_DTYPE.get(kv_dtype_str, torch.float16)
+        from lmcache.vcache.utils import str_to_dtype
+        kv_dtype = str_to_dtype(kv_dtype_str)
         
-        # 创建CacheEngineKey对象
-        # fmt参数通常是"vllm"或"lmcache"，这里使用"vllm"表示vLLM格式
-        cache_key = CacheEngineKey(
-            fmt="vllm",  # 使用vLLM格式
+        cache_key = VCacheKey(
+            fmt="vllm", 
             model_name=model_name,
-            world_size=world_size,
-            worker_id=worker_id,  # 固定为0
             chunk_hash=chunk_hash,
-            dtype=kv_dtype,
-            request_configs=None
+            dtype=kv_dtype
         )
         
         return cache_key
     
-    def lookup_prefix(self, tokens: Union[torch.Tensor, List[int]]) -> int:
-        """
-        前缀缓存查找，返回最长连续命中的前缀长度
-        
-        Args:
-            tokens: 输入的tokens
-            
-        Returns:
-            最长连续命中的前缀长度
-        """
-        # 这个函数需要与存储后端配合使用
-        # 这里返回模拟的前缀命中长度
-        if isinstance(tokens, torch.Tensor):
-            token_list = tokens.cpu().tolist()
-        else:
-            token_list = tokens
-        
-        # 模拟前缀缓存查找逻辑
-        prefix_hash = self.NONE_HASH
-        max_hit_length = 0
-        
-        for chunk_tokens in self._chunk_tokens(token_list):
-            prefix_hash = self._hash_tokens(chunk_tokens, prefix_hash)
-            
-            # 这里应该检查存储后端是否包含这个key
-            # 为了测试目的，我们假设第一个chunk总是命中
-            if max_hit_length == 0:
-                max_hit_length = len(chunk_tokens)
-            else:
-                # 模拟后续chunk的检查
-                break
-        
-        return max_hit_length
