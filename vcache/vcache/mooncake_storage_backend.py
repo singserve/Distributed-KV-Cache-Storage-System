@@ -15,7 +15,6 @@ from lmcache.vcache.vcache_config import VCacheConfig
 
 logger = init_logger(__name__)
 
-# Mooncake imports
 try:
     from mooncake.store import MooncakeDistributedStore
     MOONCAKE_AVAILABLE = True
@@ -48,10 +47,12 @@ class MooncakeStorageBackend:
     
     def _initialize_mooncake(self):
         """Initialize Mooncake store using config and transfer engine."""
-        # Create Mooncake store client using the correct API from test files
+        if not MOONCAKE_AVAILABLE:
+            logger.error("Mooncake store library is not available. "
+                         "Please install mooncake-store package to use this backend.")
+            return
         self.store_client = MooncakeDistributedStore()
         
-        # Get configuration from config or use defaults
         local_hostname = self._get_config_value("local_hostname", f"gpu_{self.gpu_id}")
         metadata_server = self._get_config_value("metadata_server", "http://127.0.0.1:8080/metadata")
         global_segment_size = self._get_config_value("global_segment_size", 3200 * 1024 * 1024)  # 3200 MB
@@ -60,13 +61,8 @@ class MooncakeStorageBackend:
         device_name = self._get_config_value("device_name", "")
         master_server_address = self._get_config_value("master_server_address", "127.0.0.1:50051")
         
-        # Support for different metadata server formats
         if metadata_server.startswith("http://"):
-            # HTTP metadata server format
             logger.info(f"Using HTTP metadata server: {metadata_server}")
-        elif ":" in metadata_server and not metadata_server.startswith("http"):
-            # TCP metadata server format (e.g., "127.0.0.1:2379")
-            logger.info(f"Using TCP metadata server: {metadata_server}")
         else:
             logger.warning(f"Unrecognized metadata server format: {metadata_server}")
         
@@ -74,13 +70,13 @@ class MooncakeStorageBackend:
         if protocol == "rdma":
             # For RDMA, use appropriate device name
             device_name = self._get_config_value("device_name", "")
-            logger.info(f"Using RDMA protocol with device: {device_name}")
+            logger.info(f"mooncake storage backend using RDMA protocol with device: {device_name}")
         else:
             # For TCP, use default device
             device_name = self._get_config_value("device_name", "")
-            logger.info(f"Using TCP protocol with device: {device_name}")
+            logger.info(f"mooncake storage backend using TCP protocol with device: {device_name}")
         
-        logger.info(f"Initializing Mooncake store with enhanced metadata config:")
+        logger.info(f"Initializing Mooncake store with config:")
         logger.info(f"  local_hostname: {local_hostname}")
         logger.info(f"  metadata_server: {metadata_server}")
         logger.info(f"  protocol: {protocol}")
@@ -102,7 +98,6 @@ class MooncakeStorageBackend:
         
         if result != 0:
             logger.error(f"Failed to setup Mooncake store client: {result}")
-            logger.error("Please check metadata server configuration and network connectivity")
             self.store_client = None
             return
         
@@ -116,12 +111,10 @@ class MooncakeStorageBackend:
         if self.config is None:
             return default
         
-        # Try to get from extra_config first
         value = self.config.get_extra_config_value(key, None)
         if value is not None:
             return value
         
-        # Try to get from config attributes
         if hasattr(self.config, key):
             return getattr(self.config, key)
         
@@ -153,9 +146,7 @@ class MooncakeStorageBackend:
             - kv_cache_tensor: Reconstructed KV cache tensor data
         """
         assert self.store_client is not None, "Mooncake store client is not initialized"
-        
-
-        
+          
         # Convert cache key to appropriate format for Mooncake store
         if hasattr(cache_key, 'chunk_hash'):
             key = cache_key.chunk_hash
@@ -176,7 +167,6 @@ class MooncakeStorageBackend:
             logger.warning(f"Mooncake retrieve: key {key_str} exists but has no data")
             return [], torch.tensor([])
         
-        # Parse the enhanced storage data
         try:
             storage_data = pickle.loads(retrieved_data)
             
@@ -220,9 +210,6 @@ class MooncakeStorageBackend:
                         kv_cache_tensor = torch.from_numpy(np_array).to(torch.float32)
                     else:
                         kv_cache_tensor = torch.from_numpy(np_array).to(torch.float16)
-                    
-                    logger.debug(f"Reconstructed KV cache tensor: shape={kv_cache_tensor.shape}, "
-                                    f"dtype={kv_cache_tensor.dtype}")
                 else:
                     logger.warning(f"Mooncake retrieve: no kv_cache_bytes found for key {key_str}")
                     return [], torch.tensor([])
@@ -241,7 +228,11 @@ class MooncakeStorageBackend:
             logger.error(f"Failed to parse stored token data: {parse_error}")
             return [], torch.tensor([])
     
-    def _verify_token_match(self, input_tokens: List[int], stored_tokens: List[int]) -> bool:
+    def _verify_token_match(
+        self, 
+        input_tokens: List[int], 
+        stored_tokens: List[int]
+    ) -> bool:
         """
         Verify that the stored tokens match the input tokens (for the matching prefix).
         
@@ -251,17 +242,18 @@ class MooncakeStorageBackend:
         Returns:
             True if stored tokens match the prefix of input tokens, False otherwise
         """
-        # Check if stored tokens match the prefix of input tokens
         for i in range(len(stored_tokens)):
             if stored_tokens[i] != input_tokens[i]:
-                logger.warning(f"Token mismatch at position {i}: "
-                               f"stored={stored_tokens[i]}, "
-                               f"input={input_tokens[i]}")
                 return False
         
         return True
     
-    def store(self, tokens: List[int], kvcaches, cache_key=None) -> bool:
+    def store(
+        self, 
+        tokens: List[int], 
+        kvcaches, 
+        cache_key
+    ) -> bool:
         """
         Store actual KV cache data to Mooncake store for a single chunk.
         
@@ -274,20 +266,17 @@ class MooncakeStorageBackend:
             True if store successful, False otherwise
         """   
         assert self.store_client is not None, "Mooncake store client is not initialized" 
-
-        
+      
         if kvcaches is None:
             logger.error("No kvcaches provided for actual KV cache data storage")
             return False
         
-        if cache_key is not None:
-            if hasattr(cache_key, 'chunk_hash'):
-                key = cache_key.chunk_hash
-            else:
-                key = cache_key
+        if hasattr(cache_key, 'chunk_hash'):
+            key = cache_key.chunk_hash
+        else:
+            key = cache_key
         key_str = str(key)
         
-        # kvcaches is now a single CPU tensor containing chunk KV cache data
         kv_cache_data = {}
         kv_cache_bytes = None
         
@@ -303,7 +292,7 @@ class MooncakeStorageBackend:
         storage_data = {
             "token_ids": tokens, 
             "kv_cache_data": kv_cache_data,
-            "data_size": len(kv_cache_bytes) if kv_cache_bytes is not None else 0
+            "data_size": len(kv_cache_bytes)
         }
                
         storage_bytes = pickle.dumps(storage_data)
@@ -324,7 +313,7 @@ class MooncakeStorageBackend:
     def lookup(
         self, 
         tokens: List[int], 
-        all_chunks: Optional[List[Tuple[int, int, any]]] = None
+        all_chunks: Optional[List[Tuple[int, int, any]]]
     ) -> Tuple[int, Optional[List[Tuple[int, int, any]]]]:
         """
         lookup KV cache in Mooncake store.
@@ -352,6 +341,10 @@ class MooncakeStorageBackend:
         chunk_info_list = []
         
         for start, end, cache_key in all_chunks:
+            chunk_tokens = tokens[start:end]
+            logger.debug(f"Checking Mooncake storage for continuous chunk [{start}, {end}): "
+                         f"{len(chunk_tokens)} tokens")
+            
             # Check if this chunk is continuous from the beginning
             if start != expected_start:
                 # Found a gap, stop checking
@@ -361,61 +354,60 @@ class MooncakeStorageBackend:
                              f"stopping Mooncake lookup")
                 break
             
-            chunk_tokens = tokens[start:end]
-            logger.debug(f"Checking Mooncake storage for continuous chunk [{start}, {end}): "
-                         f"{len(chunk_tokens)} tokens")
+
             
             # Use cache_key to check if chunk exists in Mooncake store
             if hasattr(cache_key, 'chunk_hash'):
-                # Use chunk_hash for VCacheKey objects
                 key_str = str(cache_key.chunk_hash)
             else:
                 key_str = str(cache_key)
             
             exists_result = self.store_client.is_exist(key_str)
-            if exists_result == 1:
-                retrieved_data = self.store_client.get(key_str)
-                if retrieved_data and retrieved_data != b"":
-                    try:
-                        storage_data = pickle.loads(retrieved_data)
-                        if isinstance(storage_data, dict) and "token_ids" in storage_data:
-                            stored_tokens = storage_data["token_ids"]
-                            actual_stored_length = len(stored_tokens)
-                            
-                            # Verify that stored tokens match the chunk tokens
-                            if self._verify_token_match(chunk_tokens, stored_tokens):
-                                # Entire chunk is hit, add to continuous hit tokens
-                                continuous_hit_tokens += actual_stored_length
-                                expected_start = end
-                                
-                                # Add chunk info to the list
-                                chunk_info_list.append((start, end, cache_key))                              
-                                logger.debug(f"Found Mooncake storage hit"
-                                            f"for continuous chunk [{start}, {end}): "
-                                            f"{actual_stored_length} tokens")
-
-                            else:
-                                # Token mismatch, stop checking
-                                logger.warning(f"Token mismatch for chunk [{start}, {end}): "
-                                                f"stored {len(stored_tokens)} tokens "
-                                                f"but expected {len(chunk_tokens)}, "
-                                                f"stopping Mooncake lookup")
-                                break
-                        else:
-                            logger.warning(f"Mooncake lookup: unexpected storage data format for key {key_str}, "
-                                            f"stopping lookup")
-                            break
-                    except Exception as parse_error:
-                        logger.warning(f"Failed to parse stored token data: {parse_error}, stopping Mooncake lookup")
-                        break
-                else:
-                    # Key exists but has no data, stop checking
-                    logger.warning(f"Mooncake lookup: key {key_str} exists but has no data, stopping lookup")
-                    break
-            else:
+            if exists_result != 1:
                 # Key does not exist, stop checking
                 logger.debug(f"Mooncake lookup: key {key_str} does not exist in store, stopping lookup")
                 break
+
+            retrieved_data = self.store_client.get(key_str)
+            if retrieved_data is None or retrieved_data == b"":
+                # Key exists but has no data, stop checking
+                logger.warning(f"Mooncake lookup: key {key_str} exists but has no data, stopping lookup")
+                break
+
+            try:
+                storage_data = pickle.loads(retrieved_data)
+                if isinstance(storage_data, dict) and "token_ids" in storage_data:
+                    stored_tokens = storage_data["token_ids"]
+                    actual_stored_length = len(stored_tokens)
+                    
+                    # Verify that stored tokens match the chunk tokens
+                    if self._verify_token_match(chunk_tokens, stored_tokens):
+                        # Entire chunk is hit, add to continuous hit tokens
+                        continuous_hit_tokens += actual_stored_length
+                        expected_start = end
+                        
+                        # Add chunk info to the list
+                        chunk_info_list.append((start, end, cache_key))                              
+                        logger.debug(f"Found Mooncake storage hit"
+                                    f"for continuous chunk [{start}, {end}): "
+                                    f"{actual_stored_length} tokens")
+
+                    else:
+                        # Token mismatch, stop checking
+                        logger.warning(f"Token mismatch for chunk [{start}, {end}): "
+                                        f"stored {len(stored_tokens)} tokens "
+                                        f"but expected {len(chunk_tokens)}, "
+                                        f"stopping Mooncake lookup")
+                        break
+                else:
+                    logger.warning(f"Mooncake lookup: unexpected storage data format for key {key_str}, "
+                                    f"stopping lookup")
+                    break
+            except Exception as parse_error:
+                logger.warning(f"Failed to parse stored token data: "
+                               f"{parse_error}, stopping Mooncake lookup")
+                break
+               
         
         if continuous_hit_tokens > 0:
             logger.info(f"Mooncake lookup: found {continuous_hit_tokens} tokens "
@@ -439,11 +431,10 @@ class MooncakeStorageBackend:
         """
         assert self.store_client is not None, "Mooncake store client is not initialized"
         
-        if cache_key is not None:
-            if hasattr(cache_key, 'chunk_hash'):
-                key = cache_key.chunk_hash
-            else:
-                key = cache_key
+        if hasattr(cache_key, 'chunk_hash'):
+            key = cache_key.chunk_hash
+        else:
+            key = cache_key
         key_str = str(key)
         
         # Check if key exists in Mooncake store

@@ -12,9 +12,10 @@ import time
 from multiprocessing.managers import BaseManager
 import torch
 
-from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMEntry
+from lmcache.vcache.vram_metadata_server.gpu_vram_pool_manager import GPUVRAMEntry
 from lmcache.vcache.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
+from lmcache.vcache.utils import dtype_to_str,str_to_dtype
 
 logger = init_logger(__name__)
 
@@ -44,8 +45,9 @@ class VRAMMetadataIPCClient:
         self.is_connected = False
         
         # Connection timeout settings
-        self.connection_timeout = 10.0
-        self.retry_count = 3
+        self.retry_count = config.get_extra_config_value(
+            "vram_metadata_ipc_retry_count", 3
+        )
         
         # Statistics
         self.total_requests = 0
@@ -54,7 +56,8 @@ class VRAMMetadataIPCClient:
         # Connect to server
         self._connect_to_server()
         
-        logger.info(f"VRAM Metadata IPC Client initialized for server: {self.server_address}:{self.server_port}")
+        logger.info(f"VRAM Metadata IPC Client initialized "
+                    f"for server: {self.server_address}:{self.server_port}")
 
     def _connect_to_server(self):
         """Connect to the IPC metadata server."""
@@ -91,7 +94,7 @@ class VRAMMetadataIPCClient:
                 # Test the connection by calling a simple method
                 try:
                     health_info = self.server_proxy.health_check()
-                    logger.info(f"Connection test successful: {health_info}")
+                    logger.debug(f"Connection test successful: {health_info}")
                 except Exception as e:
                     logger.error(f"Connection test failed: {e}")
                     raise ConnectionError("Not connected to VRAM metadata IPC server")
@@ -152,10 +155,7 @@ class VRAMMetadataIPCClient:
                     logger.info(f"IPC lookup successful: "
                                 f"{hit_tokens} hits, "
                                 f"Chunks: {len(chunk_info_list) if chunk_info_list else 0}")
-                    
-                    logger.debug(f"IPC lookup result - "
-                                 f"Hits: {hit_tokens}, "
-                                 f"Chunk info list: {chunk_info_list}")
+        
                     return hit_tokens, chunk_info_list
                 else:
                     logger.error(f"Unexpected result format: {type(result)}, "
@@ -191,7 +191,7 @@ class VRAMMetadataIPCClient:
                 
                 # Serialize key and dtype for IPC transmission
                 key_dict = self._serialize_key(cache_key)
-                tensor_dtype_str = str(tensor_dtype)
+                tensor_dtype_str = dtype_to_str(tensor_dtype)
                 
                 # Make IPC call
                 success = self.server_proxy.register_kvcache(
@@ -225,7 +225,8 @@ class VRAMMetadataIPCClient:
 
     def batch_register_kvcache(
         self,
-        entries_data: List[Tuple[VCacheKey, List[int], int, tuple, torch.dtype, int, Optional[int], Optional[str], Optional[str], int]]
+        entries_data: List[Tuple[VCacheKey, List[int], int, tuple, 
+                                 torch.dtype, int, Optional[int], Optional[str], Optional[str], int]]
     ) -> List[bool]:
         """
         batch register KV cache to GPU VRAM pool metadata
@@ -386,12 +387,14 @@ class VRAMMetadataIPCClient:
                 return None
 
 
-    def register_segment_ipc_handle(self, 
-                                    segment_id: str, 
-                                    buffer_pointer: int, 
-                                    handle_bytes: bytes, 
-                                    gpu_id: int, 
-                                    size: int) -> bool:
+    def register_segment_ipc_handle(
+        self, 
+        segment_id: str, 
+        buffer_pointer: int, 
+        handle_bytes: bytes, 
+        gpu_id: int, 
+        size: int
+    ) -> bool:
         """Register an IPC mem handle for a pre-allocated segment on this host.
 
         Returns True on success, False otherwise.
@@ -400,11 +403,13 @@ class VRAMMetadataIPCClient:
             self.total_requests += 1
             try:
                 self._ensure_connection()
-                res_proxy = self.server_proxy.register_segment_ipc_handle(segment_id, 
-                                                                          buffer_pointer, 
-                                                                          handle_bytes, 
-                                                                          gpu_id, 
-                                                                          size)
+                res_proxy = self.server_proxy.register_segment_ipc_handle(
+                    segment_id, 
+                    buffer_pointer, 
+                    handle_bytes, 
+                    gpu_id, 
+                    size
+                )
                 if hasattr(res_proxy, '_getvalue'):
                     res = res_proxy._getvalue()
                 else:
@@ -422,7 +427,12 @@ class VRAMMetadataIPCClient:
                 logger.error(f"IPC register_segment_ipc_handle failed: {e}")
                 return False
     
-    def unregister_segment_ipc_handle(self, segment_id: str, buffer_pointer: int, gpu_id: int) -> bool:
+    def unregister_segment_ipc_handle(
+        self, 
+        segment_id: str, 
+        buffer_pointer: int, 
+        gpu_id: int
+    ) -> bool:
         """
         Unregister a previously registered segment IPC handle.
         
@@ -439,34 +449,35 @@ class VRAMMetadataIPCClient:
             try:
                 self._ensure_connection()
                 
-                try:
-                    res_proxy = self.server_proxy.unregister_segment_ipc_handle(segment_id, buffer_pointer, gpu_id)
-                    if hasattr(res_proxy, '_getvalue'):
-                        res = res_proxy._getvalue()
-                    else:
-                        res = res_proxy
-                    
-                    if res:
-                        logger.info(f"Unregistered segment IPC handle via IPC: {segment_id} "
-                                   f"@ GPU{gpu_id}:{hex(buffer_pointer)}")
-                        return True
-                    else:
-                        self.failed_requests += 1
-                        logger.error("Server failed to unregister segment IPC handle")
-                        return False
-                except AttributeError:
-                    # Method not registered on server, log warning and return False
-                    logger.warning(f"unregister_segment_ipc_handle method not available on server. "
-                                  f"Please update the server to support this method.")
+                res_proxy = self.server_proxy.unregister_segment_ipc_handle(
+                    segment_id, 
+                    buffer_pointer, 
+                    gpu_id
+                )
+                if hasattr(res_proxy, '_getvalue'):
+                    res = res_proxy._getvalue()
+                else:
+                    res = res_proxy
+                
+                if res:
+                    logger.info(f"Unregistered segment IPC handle via IPC: {segment_id} "
+                                f"@ GPU{gpu_id}:{hex(buffer_pointer)}")
+                    return True
+                else:
                     self.failed_requests += 1
+                    logger.error("Server failed to unregister segment IPC handle")
                     return False
+
                     
             except Exception as e:
                 self.failed_requests += 1
                 logger.error(f"IPC unregister_segment_ipc_handle failed: {e}")
                 return False
 
-    def batch_get_entry(self, keys: List[VCacheKey]) -> List[Optional[object]]:
+    def batch_get_entry(
+        self, 
+        keys: List[VCacheKey]
+    ) -> List[Optional[object]]:
         """
         batch get metadata entries by delegating to VRAM metadata IPC server.
         Returns a list of GPUVRAMEntry objects or None.
@@ -606,15 +617,6 @@ class VRAMMetadataIPCClient:
         except:
             return False
 
-    def shutdown_server(self) -> bool:
-        """Request server shutdown (for testing purposes)."""
-        try:
-            self._ensure_connection()
-            return self.server_proxy.shutdown_server()
-        except Exception as e:
-            logger.error(f"IPC shutdown_server failed: {e}")
-            return False
-
     def _serialize_key(self, key: VCacheKey) -> Dict:
         """Serialize VCacheKey to dictionary for IPC transmission."""
         return {
@@ -637,7 +639,6 @@ class VRAMMetadataIPCClient:
 
     def _deserialize_dtype(self, dtype_str: str) -> torch.dtype:
         """Deserialize dtype string to torch.dtype."""
-        from lmcache.vcache.utils import str_to_dtype
         return str_to_dtype(dtype_str)
 
     def contains(self, key: VCacheKey) -> bool:
@@ -687,7 +688,6 @@ class VRAMMetadataIPCClient:
         return True
 
 
-# Factory function for easy instantiation
 def get_vram_metadata_ipc_client(config):
     """Factory function to get VRAM metadata IPC client instance."""
     return VRAMMetadataIPCClient(config)

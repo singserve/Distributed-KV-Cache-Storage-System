@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 import threading
 import time
-
-# Third Party
 import torch
 
 # First Party
@@ -177,7 +175,8 @@ class GPUVRAMPoolManager:
                             break
                     else:
                         # Chunk not found in metadata, stop checking
-                        logger.debug(f"Breaking at chunk [{start}, {end}): chunk not found in GPU VRAM metadata, stopping lookup")
+                        logger.debug(f"Breaking at chunk [{start}, {end}): "
+                                     f"chunk not found in GPU VRAM metadata, stopping lookup")
                         break
                 
                 if continuous_hit_tokens > 0:

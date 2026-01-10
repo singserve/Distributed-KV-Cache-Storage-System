@@ -12,6 +12,9 @@ class VCacheConfig:
     # Connector role: "scheduler" or "worker"
     connector_role: str = "worker"  # "scheduler" or "worker"
     
+    # Token chunking configuration
+    chunk_size: int = 256  # Token number per chunk
+    
     # Used by TestCacheEngine for GPU VRAM pool initialization
     enable_gpu_vram_pool: bool = True
     use_vram_metadata_server: bool = True
@@ -20,19 +23,20 @@ class VCacheConfig:
     max_gpu_vram_metadata_size: int = 10000
     
     # GPU VRAM Segment Management
-    gpu_vram_segment_size_mb: int = 631242752
+    gpu_vram_segment_size_mb: int = 256
     enable_gpu_vram_segments: bool = True
     
     # Used by MooncakeStorageBackend
     local_hostname: str = "localhost"
-    global_segment_size: int = 3200  # MB
-    local_buffer_size: int = 512    # MB
+    global_segment_size: int = 631242752
+    local_buffer_size: int = 631242752
     master_server_address: str = "127.0.0.1:50051"
     metadata_server: str = "http://127.0.0.1:8080/metadata"
 
     # VRAM Metadata IPC Server
     vram_metadata_ipc_address: str = "192.168.1.86"
     vram_metadata_ipc_port:int = 9091
+    vram_metadata_ipc_retry_count: int = 3
 
     # TransferEngineManager
     transfer_engine_type: str = "nvlink"

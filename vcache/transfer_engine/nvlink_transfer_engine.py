@@ -12,7 +12,7 @@ import ctypes
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.vcache.transfer_engine_interface import TransferEngineInterface
+from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
 
@@ -23,8 +23,8 @@ class TransferRequest:
     request_id: str
     source_gpu: int
     target_gpu: int
-    source_address: int  # GPU memory address
-    target_address: int  # GPU memory address
+    source_address: int 
+    target_address: int 
     size: int  # Size in bytes
     ipc_handle: Optional[bytes] = None  # Serialized cudaIpcMemHandle if source is remote
     src_offset: int = 0  # offset into source buffer (bytes)
@@ -46,7 +46,12 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
     2. Manage local transfer queues and statistics
     """
     
-    def __init__(self, config, gpu_id: int, ipc_client=None):
+    def __init__(
+        self, 
+        config, 
+        gpu_id: int, 
+        ipc_client=None
+    ):
         """
         Initialize distributed NVLINK transfer engine for a specific GPU.
         
@@ -61,7 +66,6 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         
         self.lock = threading.RLock()
         
-        # Check if CUDA and NVLINK are available
         self.cuda_available = torch.cuda.is_available()
         self.nvlink_available = self._check_nvlink_availability()
         
@@ -69,7 +73,7 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         self.cuda_lib = None
         self._load_cuda_library()
         
-        # Transfer queue management (local to this engine)
+        # Transfer queue management
         self.transfer_queue: List[TransferRequest] = []
         self.active_transfers: Dict[str, TransferRequest] = {}
         self.completed_transfers: Dict[str, TransferRequest] = {}

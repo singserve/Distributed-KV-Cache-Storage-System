@@ -12,7 +12,7 @@ import os
 import torch
 
 from lmcache.vcache.vcache_logging import init_logger
-from lmcache.vcache.transfer_engine_interface import TransferEngineInterface
+from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
 

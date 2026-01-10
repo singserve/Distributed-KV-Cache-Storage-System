@@ -7,13 +7,11 @@ Segment manager handles real GPU memory allcation/deallocation and it allocates 
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
-import threading
 import time
 import torch
-import ctypes
 
-from lmcache.vcache.vcache_logging import init_logger
-from lmcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
+from lmcache.vcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
 from lmcache.vcache.utils import VCacheKey
 
 logger = init_logger(__name__)
@@ -50,7 +48,7 @@ class MemoryBlock:
             start=self.start + size,
             size=self.size - size,
             is_allocated=False,
-            next=self.next  # Keep the original next pointer
+            next=self.next 
         )
         
         # Update current block size
@@ -66,14 +64,12 @@ class MemoryBlock:
 class GPUVRAMSegment:
     """GPU VRAM segment for data exchange"""
     segment_id: str  # Unique segment identifier
-    gpu_id: int  # GPU device ID
+    gpu_id: int
     base_address: int  # Base GPU memory address
-    size: int  # Segment size in bytes
-    is_active: bool = True  # Whether segment is active for allocation
+    size: int
     created_time: float = 0.0
     last_access_time: float = 0.0
     
-    # Memory management using two linked lists
     free_blocks_head: Optional[MemoryBlock] = None  # Linked list of free blocks
     allocated_blocks_head: Optional[MemoryBlock] = None  # Linked list of allocated blocks
     
@@ -123,9 +119,6 @@ class GPUVRAMSegment:
         Returns:
             Tuple of (offset, allocated_block) or None if allocation failed
         """
-        if not self.is_active:
-            return None
-        
         # Find best fit free block
         prev = None
         current = self.free_blocks_head
@@ -135,7 +128,6 @@ class GPUVRAMSegment:
         
         while current:
             if not current.is_allocated and current.size >= size:
-                # Found a free block that can fit the request
                 if current.size < best_fit_size:
                     best_fit_prev = prev
                     best_fit_block = current
@@ -168,7 +160,7 @@ class GPUVRAMSegment:
         # Mark as allocated
         best_fit_block.is_allocated = True
         
-        # Add to allocated list (sorted by start address)
+        # Add to allocated list
         self._add_to_allocated_list(best_fit_block)
         
         # Update access time
@@ -196,7 +188,7 @@ class GPUVRAMSegment:
         # Mark as free
         block.is_allocated = False
         
-        # Add to free list (sorted by start address)
+        # Add to free list
         self._add_to_free_list(block)
         
         # Merge with adjacent free blocks
@@ -548,14 +540,19 @@ class GPUVRAMSegmentManager:
     after that, memory allocation just slice from pre-allocated segments.
     """
     
-    def __init__(self, config, gpu_id: int, transfer_engine_manager=None):
+    def __init__(
+        self, 
+        config, 
+        gpu_id: int, 
+        transfer_engine_manager=None
+    ):
         self.config = config
         self.gpu_id = gpu_id
         self.transfer_engine_manager = transfer_engine_manager
         
         # GPU VRAM segment management for this specific GPU
-        self.segments: List[GPUVRAMSegment] = []  # List of segments on this GPU
-        self.segment_size_mb = config.get_extra_config_value("gpu_vram_segment_size_mb", 256)  # Default 256MB per segment
+        self.segments: List[GPUVRAMSegment] = [] 
+        self.segment_size_mb = config.get_extra_config_value("gpu_vram_segment_size_mb", 256) 
         
         # Store tensor references to prevent garbage collection
         self._segment_tensors: Dict[str, torch.Tensor] = {}
@@ -570,12 +567,13 @@ class GPUVRAMSegmentManager:
         try:
             # Allocate initial segment for this GPU
             self._allocate_gpu_segment()
-            logger.debug(f"Initialized GPU VRAM segments for GPU {self.gpu_id}")
         except Exception as e:
-            logger.error(f"Failed to initialize GPU VRAM segments for GPU {self.gpu_id}: {e}")
+            raise RuntimeError(f"Failed to initialize GPU VRAM segments for GPU {self.gpu_id}: {e}")
 
 
-    def _allocate_gpu_segment(self) -> Optional[GPUVRAMSegment]:
+    def _allocate_gpu_segment(
+        self
+    ) -> Optional[GPUVRAMSegment]:
         """
         Allocate a GPU VRAM segment on this GPU using CUDA methods.
         
@@ -583,11 +581,9 @@ class GPUVRAMSegmentManager:
             GPUVRAMSegment object if successful, None otherwise
         """
         try:
-            # Save current device
             original_device = torch.cuda.current_device()
             torch.cuda.set_device(self.gpu_id)
             
-            # Calculate segment size in bytes (MB to bytes)
             segment_size_bytes = self.segment_size_mb * 1024 * 1024
             
             # Allocate GPU memory using PyTorch
@@ -597,13 +593,10 @@ class GPUVRAMSegmentManager:
             # use uint8 tensor for 1-byte alignment
             tensor = torch.zeros(num_elements, dtype=torch.uint8, device='cuda')
             
-            # Get the actual GPU memory address
             base_address = tensor.data_ptr()
             
-            # Create segment ID
             segment_id = f"gpu_{self.gpu_id}_segment_{len(self.segments)}"
             
-            # Create segment object
             segment = GPUVRAMSegment(
                 segment_id=segment_id,
                 gpu_id=self.gpu_id,
@@ -622,24 +615,26 @@ class GPUVRAMSegmentManager:
                         f"address: {hex(base_address)}, "
                         f"segment_id: {segment_id}")
             
-            # Register segment with transfer engine manager if available
-            if self.transfer_engine_manager:
-                success = self.transfer_engine_manager.register_segment(
-                    segment_id=segment_id,
-                    base_address=base_address,
-                    gpu_id=self.gpu_id,
-                    size=segment_size_bytes
-                )
-                if success:
-                    logger.debug(f"Registered segment {segment_id} via transfer engine manager")
-                else:
-                    logger.error(f"Failed to register segment {segment_id} via transfer engine manager")
-            else:
-                logger.warning(f"Transfer engine manager not available, cannot register segment {segment_id}")
-
-            # Restore original device
-            torch.cuda.set_device(original_device)
+            # Register segment with transfer engine manager
+            if not self.transfer_engine_manager:
+                logger.error(f"Transfer engine manager not available, "
+                             f"cannot register segment {segment_id}")
+                raise RuntimeError("Transfer engine manager not available for segment registration")
             
+            success = self.transfer_engine_manager.register_segment(
+                segment_id=segment_id,
+                base_address=base_address,
+                gpu_id=self.gpu_id,
+                size=segment_size_bytes
+            )
+            if success:
+                logger.debug(f"Registered segment {segment_id} via transfer engine manager")
+            else:
+                logger.error(f"Failed to register segment {segment_id} via transfer engine manager")
+                raise RuntimeError(f"Segment registration failed for {segment_id}")
+                
+            # Restore original device
+            torch.cuda.set_device(original_device)          
             return segment
             
         except Exception as e:
@@ -648,10 +643,13 @@ class GPUVRAMSegmentManager:
             torch.cuda.set_device(original_device)
             return None
 
-    def get_available_segment(self, required_size: int) -> Optional[GPUVRAMSegment]:
+    def get_available_segment(
+        self, 
+        required_size: int
+    ) -> Optional[GPUVRAMSegment]:
         """
         Find an available GPU VRAM segment with sufficient space on this GPU.
-        If no segment has a large enough contiguous free block, use LRU to evict VRAM units
+        If no segment has a large enough free block, use LRU to evict VRAM units
         and merge freed space with adjacent free blocks.
         
         Args:
@@ -662,16 +660,15 @@ class GPUVRAMSegmentManager:
         """
         # First pass: check if any segment has a large enough contiguous free block
         for segment in self.segments:
-            if segment.is_active:
-                current = segment.free_blocks_head
-                while current:
-                    if not current.is_allocated and current.size >= required_size:
-                        return segment
-                    current = current.next
+            current = segment.free_blocks_head
+            while current:
+                if not current.is_allocated and current.size >= required_size:
+                    return segment
+                current = current.next
         
         # No segment has a large enough contiguous free block
         # Try to evict LRU VRAM units to create larger contiguous free blocks
-        logger.info(f"No segment has contiguous free block of size {required_size} bytes, "
+        logger.debug(f"No segment has contiguous free block of size {required_size} bytes, "
                     f"attempting LRU eviction on GPU {self.gpu_id}")
         
         # Keep track of eviction attempts to avoid infinite loops
@@ -684,10 +681,7 @@ class GPUVRAMSegmentManager:
             oldest_key = None
             oldest_time = float('inf')
             
-            for segment in self.segments:
-                if not segment.is_active:
-                    continue
-                    
+            for segment in self.segments:                 
                 # Get oldest VRAM unit in this segment
                 oldest_result = segment.get_oldest_vram_unit()
                 if oldest_result:
@@ -701,7 +695,7 @@ class GPUVRAMSegmentManager:
                 logger.error(f"No VRAM units to evict on GPU {self.gpu_id}")
                 break
             
-            logger.info(f"Evicting LRU VRAM unit {oldest_key} from segment {oldest_segment.segment_id}, "
+            logger.debug(f"Evicting LRU VRAM unit {oldest_key} from segment {oldest_segment.segment_id}, "
                        f"last accessed at {oldest_time}, size: {vram_unit.allocated_size} bytes")
             
             # Evict the VRAM unit using the manager's remove method
@@ -717,7 +711,7 @@ class GPUVRAMSegmentManager:
             current = oldest_segment.free_blocks_head
             while current:
                 if not current.is_allocated and current.size >= required_size:
-                    logger.info(f"After evicting {oldest_key}, "
+                    logger.debug(f"After evicting {oldest_key}, "
                                 f"segment {oldest_segment.segment_id} now has "
                                 f"contiguous free block of size {current.size} >= {required_size}")
                     return oldest_segment
@@ -730,14 +724,12 @@ class GPUVRAMSegmentManager:
         if eviction_attempts >= max_eviction_attempts:
             logger.warning(f"Reached maximum eviction attempts ({max_eviction_attempts}) "
                           f"but still no contiguous free block of size {required_size}")
-        
-        # If LRU eviction didn't work, try to allocate a new segment
-        logger.info(f"LRU eviction didn't create enough contiguous space, "
-                   f"allocating new segment on GPU {self.gpu_id}")
-        new_segment = self._allocate_gpu_segment()
-        return new_segment
+        return None
 
-    def allocate_in_segment(self, size: int) -> Tuple[Optional[str], Optional[int]]:
+    def allocate_in_segment(
+        self, 
+        size: int
+    ) -> Tuple[Optional[str], Optional[int]]:
         """
         Allocate space in a GPU VRAM segment for data storage on this GPU.
         only update the segment metadata, actual GPU memory is pre-allocated.
@@ -769,7 +761,12 @@ class GPUVRAMSegmentManager:
         
         return segment.segment_id, offset
 
-    def free_segment_space(self, segment_id: str, offset: int, size: int) -> bool:
+    def free_segment_space(
+        self, 
+        segment_id: str, 
+        offset: int, 
+        size: int
+    ) -> bool:
         """
         Free previously allocated space in a GPU VRAM segment.
         only update the segment metadata, actual GPU memory is pre-allocated.
@@ -790,23 +787,32 @@ class GPUVRAMSegmentManager:
         # Find the allocated block at this offset
         block = segment.get_block_by_offset(offset)
         if not block:
-            logger.error(f"No allocated block found at offset {offset} in segment {segment_id}")
+            logger.error(f"No allocated block found at "
+                         f"offset {offset} in segment {segment_id}")
             return False
         
         # Verify block size matches
         if block.size != size:
-            logger.warning(f"Block size mismatch: expected {size}, got {block.size}")
+            logger.warning(f"Block size mismatch: "
+                           f"expected {size}, "
+                           f"got {block.size}")
+            return False
         
         # Free the block
         success = segment.free(block)
         if success:
-            logger.debug(f"Freed {size} bytes in segment {segment_id} at offset {offset}")
+            logger.debug(f"Freed {size} bytes in "
+                         f"segment {segment_id} at offset {offset}")
         else:
-            logger.error(f"Failed to free block at offset {offset} in segment {segment_id}")
+            logger.error(f"Failed to free block at "
+                         f"offset {offset} in segment {segment_id}")
         
         return success
 
-    def get_segment_by_id(self, segment_id: str) -> Optional[GPUVRAMSegment]:
+    def get_segment_by_id(
+        self, 
+        segment_id: str
+    ) -> Optional[GPUVRAMSegment]:
         """
         Get segment by segment ID on this GPU.
         
@@ -821,7 +827,11 @@ class GPUVRAMSegmentManager:
                 return segment
         return None
 
-    def get_buffer_address(self, segment_id: str, offset: int) -> Optional[int]:
+    def get_buffer_address(
+        self, 
+        segment_id: str, 
+        offset: int
+    ) -> Optional[int]:
         """
         Calculate buffer address from segment ID and offset on this GPU.
         
@@ -838,7 +848,8 @@ class GPUVRAMSegmentManager:
             return None
         
         if offset < 0 or offset > segment.size:
-            logger.error(f"Offset {offset} out of bounds for segment {segment_id} (size: {segment.size})")
+            logger.error(f"Offset {offset} out of bounds "
+                         f"for segment {segment_id} (size: {segment.size})")
             return None
         
         return segment.base_address + offset
@@ -915,7 +926,7 @@ class GPUVRAMSegmentManager:
                 
                 seg.clear_vram_units()
                 
-                logger.info(f"Cleaned up segment {segment_id} metadata "
+                logger.debug(f"Cleaned up segment {segment_id} metadata "
                             f"on GPU {self.gpu_id}, "
                             f"freed all allocated blocks, reset free list, cleared VRAM units")
                 
@@ -1014,13 +1025,17 @@ class GPUVRAMSegmentManager:
             
             # check number of elements
             if len(flat_tensor) != num_elements:
-                logger.error(f"Slice size mismatch: expected {num_elements} elements, got {len(flat_tensor)}")
+                logger.error(f"Slice size mismatch: "
+                             f"expected {num_elements} elements, "
+                             f"got {len(flat_tensor)}")
                 return None
             
             # check tenor size
             actual_tensor_size = flat_tensor.element_size() * flat_tensor.nelement()
             if actual_tensor_size != allocated_size:
-                logger.error(f"Tensor size mismatch: expected {allocated_size}, got {actual_tensor_size}")
+                logger.error(f"Tensor size mismatch: "
+                             f"expected {allocated_size}, "
+                             f"got {actual_tensor_size}")
                 return None
             
             vram_unit = VRAMKVCacheUnit(
@@ -1088,3 +1103,4 @@ class GPUVRAMSegmentManager:
             logger.warning(f"GPU VRAM segment manager shutdown completed with errors for GPU {self.gpu_id}")
         
         return success
+        

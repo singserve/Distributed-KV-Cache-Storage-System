@@ -12,7 +12,7 @@ import torch
 
 from lmcache.vcache.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
-from lmcache.vcache.token_database import TokenDatabase
+from lmcache.vcache.vcache.token_database import TokenDatabase
 
 logger = init_logger(__name__)
 
@@ -25,8 +25,14 @@ class MooncakeLookupClient:
     allowing the scheduler to query Mooncake for cache hits without instantiating the full storage backend.
     """
     
-    def __init__(self, vllm_config: "VllmConfig", master_addr: str):
-        """Initialize MooncakeLookupClient."""
+    def __init__(self, vllm_config: "VllmConfig", master_addr: str, vcache_config: "VCacheConfig"):
+        """Initialize MooncakeLookupClient.
+        
+        Args:
+            vllm_config: vLLM configuration
+            master_addr: Master server address
+            vcache_config: VCache configuration containing chunk_size
+        """
         # Third Party
         from mooncake.store import MooncakeDistributedStore
         
@@ -54,11 +60,13 @@ class MooncakeLookupClient:
         from lmcache.vcache.utils import dtype_to_str
         kv_dtype_str = dtype_to_str(kv_dtype)
         
+        # Get chunk size from vcache_config
+        chunk_size = vcache_config.chunk_size
+        
         # Calculate KV shape
         num_layer = model_config.get_num_layers(parallel_config)
         num_kv_head = model_config.get_num_kv_heads(parallel_config)
         head_size = model_config.get_head_size()
-        chunk_size = 256  # Default chunk size
         
         kv_shape = (num_layer, 2, chunk_size, num_kv_head, head_size)
         
@@ -71,10 +79,11 @@ class MooncakeLookupClient:
             'worker_id': parallel_config.rank,
             'world_size': parallel_config.world_size,
             'kv_dtype': kv_dtype_str,
-            'kv_shape': kv_shape
+            'kv_shape': kv_shape,
+            'chunk_size': chunk_size
         }
         
-        logger.info(f"MooncakeLookupClient initialized with master address: {master_addr}")
+        logger.info(f"MooncakeLookupClient initialized with master address: {master_addr}, chunk_size={chunk_size}")
     
     def lookup(
         self,

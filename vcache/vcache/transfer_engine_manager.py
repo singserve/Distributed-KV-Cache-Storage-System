@@ -19,17 +19,16 @@ class TransferEngineManager:
 
     def _initialize_transfer_engine(self):
         """Initialize transfer engine based on configuration."""
-        # Get engine type from config
+
         engine_type = self.config.get_extra_config_value("transfer_engine_type", "nvlink")
         gpu_id = self.config.get_extra_config_value("gpu_id", 0)
         
         logger.info(f"Initializing transfer engine: type={engine_type}, gpu_id={gpu_id}")
         
-        # Try to initialize the selected engine
+        # initialize the selected engine
         if engine_type == "nvlink":
             try:
-                from lmcache.vcache.nvlink_transfer_engine import DistributedNVLINKTransferEngine              
-                # Initialize NVLINK transfer engine
+                from lmcache.vcache.transfer_engine.nvlink_transfer_engine import DistributedNVLINKTransferEngine              
                 self.engine = DistributedNVLINKTransferEngine(
                     config=self.config,
                     gpu_id=gpu_id,
@@ -45,8 +44,7 @@ class TransferEngineManager:
         
         elif engine_type == "mooncake":
             try:
-                from lmcache.vcache.mooncake_transfer_engine import MooncakeTransferEngine 
-                # Initialize Mooncake transfer engine
+                from lmcache.transfer_engine.vcache.mooncake_transfer_engine import MooncakeTransferEngine 
                 self.engine = MooncakeTransferEngine(
                     config=self.config,
                     gpu_id=gpu_id,
@@ -65,7 +63,13 @@ class TransferEngineManager:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    def register_segment(self, segment_id: str, base_address: int, gpu_id: int, size: int) -> bool:
+    def register_segment(
+        self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int, 
+        size: int
+    ) -> bool:
         """
         Register a GPU memory segment with the metadata server
         
@@ -85,7 +89,12 @@ class TransferEngineManager:
         return self.engine.register_segment(segment_id, base_address, gpu_id, size)
 
     
-    def unregister_segment(self, segment_id: str, base_address: int, gpu_id: int) -> bool:
+    def unregister_segment(
+        self, 
+        segment_id: str, 
+        base_address: int, 
+        gpu_id: int
+    ) -> bool:
         """
         Unregister a GPU memory segment from the metadata server.
         
@@ -119,7 +128,7 @@ class TransferEngineManager:
     ) -> bool:
         """Transfer data between GPUs using transfer engine.
 
-        ipc_handle: when transferring from a remote process allocation,
+        ipc_handle: when transferring from a remote process allocation using nvlink engine,
         pass the serialized cudaIpcMemHandle bytes so the engine can open the handle
         locally and perform the transfer.
         """
@@ -127,38 +136,31 @@ class TransferEngineManager:
             logger.warning("Transfer engine not available for cross-GPU transfer")
             return False
         
-        try:    
-            # Convert buffer addresses to integers if they're not already
-            source_address = source_buffer if isinstance(source_buffer, int) else int(source_buffer)
-            target_address = target_buffer if isinstance(target_buffer, int) else int(target_buffer)
-            
-            # If an IPC client is available, try to get an IPC mem handle for the source buffer
+        try:
+            # get an IPC mem handle for the source buffer           
+            if self.ipc_client is None:
+                return False
             ipc_handle = None
-            if self.ipc_client is not None:
-                try:
-                    # Pass GPU ID to avoid conflicts between different GPUs with the same address
-                    res = self.ipc_client.get_ipc_mem_handle(source_address, source_gpu)
-                    if res:
-                        handle_bytes, handle_gpu_id, base_pointer, segment_size = res
-                        ipc_handle = handle_bytes
-                        logger.debug(f"Obtained IPC mem handle for source buffer {hex(source_address)} "
-                                     f"on GPU {source_gpu} via IPC client: "
-                                     f"segment base {hex(base_pointer)}, "
-                                     f"size {segment_size}")
-                except Exception as e:
-                    logger.error(f"Failed to obtain IPC mem handle via IPC client: {e}")
+            try:
+                res = self.ipc_client.get_ipc_mem_handle(source_buffer, source_gpu)
+                if res:
+                    handle_bytes, handle_gpu_id, base_pointer, segment_size = res
+                    ipc_handle = handle_bytes
+                    logger.debug(f"Obtained IPC mem handle for source buffer {hex(source_buffer)} "
+                                    f"on GPU {source_gpu} via IPC client: "
+                                    f"segment base {hex(base_pointer)}, "
+                                    f"size {segment_size}")
+            except Exception as e:
+                logger.error(f"Failed to obtain IPC mem handle via IPC client: {e}")
 
-            # Add ipc_handle to kwargs if available
             if ipc_handle is not None:
                 kwargs['ipc_handle'] = ipc_handle
 
-            # Check if engine has the new transfer_gpu_to_gpu method (with hostname parameters)
-            # Use the new interface with hostname parameters
             success = self.engine.transfer_gpu_to_gpu(
                 source_gpu=source_gpu,
                 target_gpu=target_gpu,
-                source_buffer=source_address,
-                target_buffer=target_address,
+                source_buffer=source_buffer,
+                target_buffer=target_buffer,
                 size=size,
                 src_hostname=src_hostname,
                 target_hostname=target_hostname,
@@ -180,6 +182,7 @@ class TransferEngineManager:
         except Exception as e:
             logger.error(f"Exception during cross-GPU transfer: {e}")
             return False
+        
     def shutdown(self) -> bool:
         """
         Shutdown the transfer engine and release all resources.
@@ -196,19 +199,12 @@ class TransferEngineManager:
                 return True
             
             try:
-                # Call engine's shutdown method if it exists
-                if hasattr(self.engine, 'shutdown'):
-                    self.engine.shutdown()
-                    logger.info("Transfer engine shutdown completed successfully")
-                else:
-                    # If no shutdown method, just log and continue
-                    logger.info("Transfer engine does not have shutdown method, skipping")
-                
+                self.engine.shutdown()
+                     
                 # Reset engine state
                 self.engine = None
                 self.initialized = False
-                
-                logger.info("Transfer engine shutdown completed")
+                logger.info("Transfer engine shutdown completed successfully")
                 return True
                 
             except Exception as e:

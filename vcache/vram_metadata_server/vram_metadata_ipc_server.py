@@ -13,7 +13,7 @@ import torch
 
 from lmcache.vcache.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
-from lmcache.vcache.gpu_vram_pool_manager import GPUVRAMPoolManager
+from lmcache.vcache.vram_metadata_server.gpu_vram_pool_manager import GPUVRAMPoolManager
 logger = init_logger(__name__)
 
 

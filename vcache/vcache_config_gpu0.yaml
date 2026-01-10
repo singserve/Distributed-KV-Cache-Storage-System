@@ -3,6 +3,9 @@ enable_gpu_vram_pool: true
 use_vram_metadata_server: true
 local_hostname: "192.168.1.86:12345"
 
+# Token chunking configuration
+chunk_size: 256  
+
 # GPUVRAMPoolManager
 max_gpu_vram_metadata_size: 10000
 
@@ -20,6 +23,7 @@ enable_gpu_vram_segments: true
 # VRAMMetadataIPCClient
 vram_metadata_ipc_address: "192.168.1.86"
 vram_metadata_ipc_port: 9091
+vram_metadata_ipc_retry_count: 3
 
 # TransferEngineManager
 transfer_engine_type: "nvlink"
