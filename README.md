@@ -28,10 +28,10 @@ The solution in this article is to build up a VRAM pool like CPU/DRAM/SSD pool l
 
 ## file organization
 **VCache**: src   
-**test**: scripts to test system functions
+**test**: scripts to test system functions  
 **integration**: vllm kv connector and factory registration  
-**log.txt**: vcache engine log output when run cross gpu store and retrieve
-**server_log.txt**: metadata server log 
+**log.txt**: vcache engine log output when run cross gpu store and retrieve  
+**server_log.txt**: metadata server log   
 
 ## quick start
 ### setup
