@@ -30,8 +30,8 @@ class VCacheConfig:
     local_hostname: str = "localhost"
     global_segment_size: int = 631242752
     local_buffer_size: int = 631242752
-    master_server_address: str = "127.0.0.1:50051"
-    metadata_server: str = "http://127.0.0.1:8080/metadata"
+    master_server_address: str = "192.168.1.86:50051"
+    metadata_server: str = "http://192.168.1.86:8080/metadata"
 
     # VRAM Metadata IPC Server
     vram_metadata_ipc_address: str = "192.168.1.86"
@@ -48,9 +48,9 @@ class VCacheConfig:
 
     # mooncake_transfer_engine
     local_hostname_TE: str = "localhost"  
-    protocol: str = "rdma"
+    protocol: str = "tcp"
     protocol_TE: str = "nvlink" 
-    device_name: str = "mlx5_0"
+    device_name: str = ""
 
     @staticmethod
     def from_defaults() -> "VCacheConfig":

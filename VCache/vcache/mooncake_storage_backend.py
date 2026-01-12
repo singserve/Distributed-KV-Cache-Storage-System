@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import pickle
 import numpy as np
 import torch
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.vcache_config import VCacheConfig
 
 logger = init_logger(__name__)
@@ -34,11 +34,10 @@ class MooncakeStorageBackend:
             "retrieves": 0,
             "stores": 0,
             "lookups": 0,
+            "contains": 0,
             "total_hit_tokens": 0,
-            "mooncake_operations": 0,
-            "zero_copy_operations": 0,
             "total_entries": 0,
-            "total_size_bytes": 0
+            "total_size_bytes": 0,
         }
         
         # Initialize Mooncake store client
@@ -214,6 +213,10 @@ class MooncakeStorageBackend:
                     logger.warning(f"Mooncake retrieve: no kv_cache_bytes found for key {key_str}")
                     return [], torch.tensor([])
                 
+                # Update statistics
+                self.stats["retrieves"] += 1
+                self.stats["total_hit_tokens"] += len(retrieved_tokens)
+                
                 logger.info(f"Mooncake retrieve: {len(retrieved_tokens)} tokens retrieved for key {key_str}, "
                             f"tensor_shape={kv_cache_tensor.shape if kv_cache_tensor is not None else 'None'}, "
                             f"data_size={storage_data.get('data_size', 0)} bytes")
@@ -301,6 +304,11 @@ class MooncakeStorageBackend:
         result = self.store_client.put(key_str, storage_bytes)
         
         if result == 0:
+            # Update statistics
+            self.stats["stores"] += 1
+            self.stats["total_entries"] += 1
+            self.stats["total_size_bytes"] += storage_data['data_size']
+            
             logger.info(f"Mooncake store: {len(tokens)} chunk tokens "
                         f"stored with key {key}, "
                         f"data_size={storage_data['data_size']} bytes")
@@ -410,16 +418,26 @@ class MooncakeStorageBackend:
                
         
         if continuous_hit_tokens > 0:
+            # Update statistics
+            self.stats["lookups"] += 1
+            self.stats["total_hit_tokens"] += continuous_hit_tokens
+            
             logger.info(f"Mooncake lookup: found {continuous_hit_tokens} tokens "
                         f"from {len(chunk_info_list)} continuous chunks")
             
             return continuous_hit_tokens, chunk_info_list
         else:
+            # Update statistics (lookup still happened)
+            self.stats["lookups"] += 1
+            
             logger.info(f"Mooncake lookup: no continuous match found from the beginning")
             return 0, None
         
     
-    def contains(self, cache_key) -> bool:
+    def contains(
+        self, 
+        cache_key
+    ) -> bool:
         """
         Check if the cache key exists in Mooncake store.
         
@@ -439,13 +457,16 @@ class MooncakeStorageBackend:
         
         # Check if key exists in Mooncake store
         exists_result = self.store_client.is_exist(key_str)
+        
+        # Update statistics
+        self.stats["contains"] += 1
+        
         return exists_result == 1
 
     
     def get_stats(self) -> Dict:
         """Get storage backend statistics."""
         stats = self.stats.copy()
-        stats["mooncake_available"] = self.store_client is not None
         return stats
     
     def close(self):
@@ -463,8 +484,6 @@ class MooncakeStorageBackend:
             "stores": 0,
             "lookups": 0,
             "total_hit_tokens": 0,
-            "mooncake_operations": 0,
-            "zero_copy_operations": 0
         }
         
         # Reset client reference

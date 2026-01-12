@@ -1,7 +1,8 @@
 
 from dataclasses import dataclass
-import threading
-from lmcache.vcache.vcache_logging import init_logger
+import time
+from typing import Dict, Any
+from lmcache.vcache.logging.vcache_logging import init_logger
 
 logger = init_logger(__name__)
 
@@ -13,7 +14,6 @@ class TransferEngineManager:
         self.ipc_client = ipc_client
         self.engine = None
         self.initialized = False
-        self.lock = threading.RLock()
         
         self._initialize_transfer_engine()
 
@@ -156,6 +156,9 @@ class TransferEngineManager:
             if ipc_handle is not None:
                 kwargs['ipc_handle'] = ipc_handle
 
+            # Record transfer start time for latency calculation
+            transfer_start_time = time.time()
+            
             success = self.engine.transfer_gpu_to_gpu(
                 source_gpu=source_gpu,
                 target_gpu=target_gpu,
@@ -169,10 +172,14 @@ class TransferEngineManager:
                 **kwargs
             )
 
+            # Calculate transfer latency
+            transfer_latency = time.time() - transfer_start_time
+            
+            # Log transfer result
             if success:
                 logger.info(f"Cross-GPU transfer successful: "
                             f"{src_hostname}:GPU {source_gpu} -> {target_hostname}:GPU {target_gpu}, "
-                            f"size: {size} bytes")
+                            f"size: {size} bytes, latency: {transfer_latency:.3f}s")
             else:
                 logger.error(f"Cross-GPU transfer failed: "
                              f"{src_hostname}:GPU {source_gpu} -> {target_hostname}:GPU {target_gpu}")
@@ -182,6 +189,30 @@ class TransferEngineManager:
         except Exception as e:
             logger.error(f"Exception during cross-GPU transfer: {e}")
             return False
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get transfer engine statistics.
+        
+        Returns:
+            Dictionary with transfer engine statistics
+        """
+        stats = {}
+        
+        # Add manager info
+        stats["engine_type"] = self.config.get_extra_config_value("transfer_engine_type", "nvlink")
+        stats["gpu_id"] = self.config.get_extra_config_value("gpu_id", 0)
+        
+        # Get transfer engine status
+        try:
+            engine_status = self.engine.get_status()
+            # Merge engine status into stats
+            stats.update(engine_status)
+        except Exception as e:
+            logger.error(f"Failed to get transfer engine status: {e}")
+
+        
+        return stats
         
     def shutdown(self) -> bool:
         """
@@ -191,22 +222,21 @@ class TransferEngineManager:
         Returns:
             True if shutdown successful, False otherwise
         """
-        with self.lock:
-            logger.info("Shutting down transfer engine")
+        logger.info("Shutting down transfer engine")
+        
+        if not self.initialized or not self.engine:
+            logger.info("Transfer engine not initialized, nothing to shutdown")
+            return True
+        
+        try:
+            self.engine.shutdown()
+                 
+            # Reset engine state
+            self.engine = None
+            self.initialized = False
+            logger.info("Transfer engine shutdown completed successfully")
+            return True
             
-            if not self.initialized or not self.engine:
-                logger.info("Transfer engine not initialized, nothing to shutdown")
-                return True
-            
-            try:
-                self.engine.shutdown()
-                     
-                # Reset engine state
-                self.engine = None
-                self.initialized = False
-                logger.info("Transfer engine shutdown completed successfully")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Error during transfer engine shutdown: {e}")
-                return False
+        except Exception as e:
+            logger.error(f"Error during transfer engine shutdown: {e}")
+            return False

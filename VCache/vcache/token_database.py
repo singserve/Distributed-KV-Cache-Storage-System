@@ -5,6 +5,7 @@ Token Database
 from typing import List, Optional, Tuple, Union, Iterable, Any
 import torch
 import os
+import time
 from lmcache.vcache.utils import VCacheKey
 
 class TokenDatabase:
@@ -26,6 +27,12 @@ class TokenDatabase:
         
         # initialize NONE_HASH similar to LMCache implementation
         self.NONE_HASH = self._init_none_hash()
+        
+        # Statistics tracking
+        self.stats = {
+            "total_tokens_processed": 0,
+            "total_chunks_generated": 0,
+        }
         
         # check distributed consistency
         self._check_distributed_consistency()
@@ -103,6 +110,9 @@ class TokenDatabase:
         prefix_hash = self.NONE_HASH  # 从NONE_HASH开始
         chunk_generator = self._chunk_tokens(token_list)
         
+        # Update statistics
+        self.stats["total_tokens_processed"] += len(token_list)
+        
         for chunk_id, chunk_tokens in enumerate(chunk_generator):
             chunk_start_idx = chunk_id * self.chunk_size
             chunk_end_idx = chunk_start_idx + len(chunk_tokens)
@@ -140,6 +150,8 @@ class TokenDatabase:
                 yield start_idx, end_idx, cache_key
             else:
                 yield start_idx, end_idx, current_prefix_hash
+            
+            self.stats["total_chunks_generated"] += 1
             
             # 注意：这里不重置prefix_hash，保持链式结构
             # 下一个chunk会继续使用当前的prefix_hash作为前缀
@@ -204,3 +216,15 @@ class TokenDatabase:
         
         return cache_key
     
+    def get_stats(self) -> dict:
+        """Get token database statistics."""
+        
+        stats = {
+            "chunk_size": self.chunk_size,
+            "save_unfull_chunk": self.save_unfull_chunk,
+            "total_tokens_processed": self.stats["total_tokens_processed"],
+            "total_chunks_generated": self.stats["total_chunks_generated"],
+            "hash_function": self.hash_func.__name__ if hasattr(self.hash_func, '__name__') else str(type(self.hash_func))
+        }
+        
+        return stats

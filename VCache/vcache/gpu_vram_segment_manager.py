@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import time
 import torch
 
-from lmcache.vcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.vcache.vram_kvcache_unit import VRAMKVCacheUnit
 from lmcache.vcache.utils import VCacheKey
 
@@ -379,10 +379,9 @@ class GPUVRAMSegment:
         return None
     
     def get_stats(self) -> dict:
-        """Get segment statistics."""
+        """Get segment statistics including VRAM unit stats."""
         allocated_count = 0
         free_count = 0
-        largest_free_block = 0
         
         current = self.allocated_blocks_head
         while current:
@@ -392,19 +391,18 @@ class GPUVRAMSegment:
         current = self.free_blocks_head
         while current:
             free_count += 1
-            if current.size > largest_free_block:
-                largest_free_block = current.size
             current = current.next
+        
+        vram_unit_count = len(self._vram_units)
         
         return {
             "segment_id": self.segment_id,
             "total_size": self.size,
             "used_size": self.used_size,
             "free_size": self.free_size,
-            "utilization": (self.used_size / self.size) * 100 if self.size > 0 else 0,
             "allocated_blocks_count": allocated_count,
             "free_blocks_count": free_count,
-            "largest_free_block": largest_free_block
+            "vram_unit_count": vram_unit_count
         }
     
     # VRAM Unit Management Methods
@@ -504,31 +502,13 @@ class GPUVRAMSegment:
     def clear_vram_units(self) -> bool:
         """
         Clear all VRAM units from this segment.
-        
+        quchu
         Returns:
             True if successful
         """
         self._vram_units.clear()
         logger.debug(f"Cleared all VRAM units from segment {self.segment_id}")
         return True
-    
-    def get_vram_unit_stats(self) -> dict:
-        """
-        Get VRAM unit statistics for this segment.
-        
-        Returns:
-            Dictionary with VRAM unit statistics
-        """
-        total_allocated_size = 0
-        for vram_unit in self._vram_units.values():
-            total_allocated_size += vram_unit.allocated_size
-        
-        return {
-            "segment_id": self.segment_id,
-            "vram_unit_count": len(self._vram_units),
-            "total_allocated_size": total_allocated_size,
-            "vram_unit_keys": list(self._vram_units.keys())
-        }
 
 
 class GPUVRAMSegmentManager:
@@ -556,6 +536,15 @@ class GPUVRAMSegmentManager:
         
         # Store tensor references to prevent garbage collection
         self._segment_tensors: Dict[str, torch.Tensor] = {}
+        
+        # Statistics tracking
+        self.stats = {
+            "total_allocations": 0,
+            "total_deallocations": 0,
+            "vram_unit_creations": 0,
+            "vram_unit_deletions": 0,
+            "segment_evictions": 0,
+        }
         
         # Initialize GPU segments for this specific GPU
         self._initialize_gpu_segments()
@@ -753,6 +742,9 @@ class GPUVRAMSegmentManager:
         
         offset, allocated_block = allocation_result
         
+        # Update statistics
+        self.stats["total_allocations"] += 1
+        
         logger.debug(f"Allocated {size} bytes "
                      f"in segment {segment.segment_id} "
                      f"on GPU {self.gpu_id}, "
@@ -801,6 +793,9 @@ class GPUVRAMSegmentManager:
         # Free the block
         success = segment.free(block)
         if success:
+            # Update statistics
+            self.stats["total_deallocations"] += 1
+            
             logger.debug(f"Freed {size} bytes in "
                          f"segment {segment_id} at offset {offset}")
         else:
@@ -855,30 +850,6 @@ class GPUVRAMSegmentManager:
         return segment.base_address + offset
 
 
-    def get_segment_stats(self) -> dict:
-        """Get GPU VRAM segment statistics for this GPU."""
-        stats = {
-            "gpu_id": self.gpu_id,
-            "total_segments": len(self.segments),
-            "total_segment_size_bytes": 0,
-            "total_used_segment_bytes": 0,
-            "segment_utilization": {}
-        }
-        
-        for segment in self.segments:
-            stats["total_segment_size_bytes"] += segment.size
-            stats["total_used_segment_bytes"] += segment.used_size
-            
-            # Calculate segment utilization
-            utilization = (segment.used_size / segment.size) * 100 if segment.size > 0 else 0
-            stats["segment_utilization"][segment.segment_id] = {
-                "size_bytes": segment.size,
-                "used_bytes": segment.used_size,
-                "utilization_percent": utilization,
-                "entry_count": segment.get_vram_unit_count()
-            }
-        
-        return stats
 
     def cleanup_segment(self, segment_id: str) -> bool:
         """
@@ -1065,6 +1036,32 @@ class GPUVRAMSegmentManager:
             logger.error(f"Failed to create flattened tensor slice from segment {segment_id}: {e}")
             return None
 
+    def get_stats(self) -> dict:
+        """
+        Get statistics for the GPU VRAM segment manager.
+    
+        
+        Returns:
+            Dictionary with statistics
+        """
+        segment_details = []
+        
+        for segment in self.segments:
+            segment_stats = segment.get_stats()
+            segment_details.append(segment_stats)
+        
+        # Include all stats from self.stats
+        stats = {
+            "gpu_id": self.gpu_id,
+            "total_segments": len(self.segments),
+            "segments": segment_details,
+        }
+        
+        # Add all stats from self.stats
+        stats.update(self.stats)
+        
+        return stats
+
     def shutdown(self) -> bool:
         """
         Shutdown the GPU VRAM segment manager and release all resources.
@@ -1103,4 +1100,3 @@ class GPUVRAMSegmentManager:
             logger.warning(f"GPU VRAM segment manager shutdown completed with errors for GPU {self.gpu_id}")
         
         return success
-        

@@ -89,7 +89,6 @@ def str_to_dtype(dtype_str: str) -> torch.dtype:
         return torch.float16
 
 
-# cdiv utility function (commonly used in vLLM)
 def cdiv(a: int, b: int) -> int:
     """Ceiling division."""
     return (a + b - 1) // b

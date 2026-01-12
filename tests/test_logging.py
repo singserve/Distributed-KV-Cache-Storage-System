@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from vcache.vcache_logging import init_logger
+from vcache.logging.vcache_logging import init_logger
 
 def test_logging_basic():
     """Test basic logging functionality."""
@@ -57,7 +57,7 @@ def test_log_level_control():
     """Test log level control."""
     print("\nTesting log level control...")
     
-    from vcache.vcache_logging import set_log_level
+    from vcache.logging.vcache_logging import set_log_level
     
     # Set to DEBUG level
     set_log_level("DEBUG")
@@ -78,7 +78,7 @@ def test_file_logging():
     """Test file logging."""
     print("\nTesting file logging...")
     
-    from vcache.vcache_logging import add_file_logging
+    from vcache.logging.vcache_logging import add_file_logging
     import tempfile
     import time
     

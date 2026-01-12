@@ -2,21 +2,22 @@
 VCache Engine System
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 
 
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey, dtype_to_str
 from lmcache.vcache.vcache_config import VCacheConfig
 from lmcache.v1.gpu_connector import GPUConnectorInterface
-from lmcache.vcache.transfer_engine.transfer_engine_manager import TransferEngineManager
+from lmcache.vcache.vcache.transfer_engine_manager import TransferEngineManager
 from lmcache.vcache.vcache.gpu_vram_segment_manager import GPUVRAMSegmentManager
 from lmcache.vcache.vcache.mooncake_storage_backend import MooncakeStorageBackend
 from lmcache.vcache.vcache.vram_metadata_ipc_client import get_vram_metadata_ipc_client
 from lmcache.vcache.vcache.token_database import TokenDatabase
 from lmcache.vcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
+from lmcache.vcache.stats.stats_manager import StatsManager
 
 logger = init_logger(__name__)
 
@@ -131,7 +132,8 @@ class VCacheEngine:
                     device=f"cuda:{metadata.worker_id}"
                 )
 
-                assert self.gpu_connector is not None, "GPU connector must be initialized for worker role"
+                assert self.gpu_connector is not None, \
+                    "GPU connector must be initialized for worker role"
             else:
                 self.gpu_connector = None
                 logger.info("No GPUConnector for scheduler role")
@@ -146,7 +148,11 @@ class VCacheEngine:
             "gpu_vram_hits": 0,
             "gpu_vram_misses": 0,
             "cross_gpu_transfers": 0
-        } 
+        }
+        
+        # Initialize StatsManager for this cache engine instance
+        self.stats_manager = StatsManager()
+        
         logger.info(f"VCacheEngine initialized for GPU {self.metadata.worker_id} "
                     f"with connector_role={connector_role}")
 
@@ -1308,32 +1314,48 @@ class VCacheEngine:
         
         return total_hit_tokens
 
-    def get_stats(self) -> Dict:
-        """Get cache engine statistics."""
-        stats = {
-            "cache_engine_stats": self.stats.copy(),
-            "current_gpu_id": self.metadata.worker_id
-        }
-        
-        # Add storage backend statistics (if exists)
-        if self.storage_backend is not None:
-            stats["storage_backend_stats"] = self.storage_backend.get_stats()
-        else:
-            stats["storage_backend_stats"] = {"status": "disabled", "reason": "scheduler_role"}
-        
-        # Add GPU VRAM pool statistics
+    def contains(
+        self, 
+        cache_key: Union[str,VCacheKey]
+    ) -> int:
+        """
+        Check if the cache key exists in the cache engine.
+        Args:
+            cache_key: The cache key to check
+        Returns:
+            0 if exists in GPU VRAM,
+            1 if exists in storage backend,
+            -1 if not found
+        """
         if self.vram_metadata_client is not None:
-            gpu_vram_stats = self.vram_metadata_client.get_stats()
-            stats["gpu_vram_pool_stats"] = gpu_vram_stats
-            
-            # Calculate GPU VRAM hit rate
-            total_gpu_vram_operations = self.stats["gpu_vram_hits"] + self.stats["gpu_vram_misses"]
-            if total_gpu_vram_operations > 0:
-                stats["gpu_vram_hit_rate"] = (self.stats["gpu_vram_hits"] / total_gpu_vram_operations) * 100
-            else:
-                stats["gpu_vram_hit_rate"] = 0.0
+            gpu_vram_exists = self.vram_metadata_client.contains(cache_key)
+
+        if self.storage_backend is not None:
+            storage_exists = self.storage_backend.contains(cache_key)
+
+        return 0 if gpu_vram_exists else (1 if storage_exists else -1)
+
+    def get_stats(self) -> Dict:
+        """Get cache engine statistics including calculated metrics."""
+        # Use the instance's stats manager
+        comprehensive_stats = self.stats_manager.collect_and_calculate(self)
         
-        return stats
+        return comprehensive_stats
+    
+    def get_stats_summary(self) -> str:
+        """
+        Get a human-readable summary of cache engine statistics.
+        
+        Returns:
+            String summary of statistics
+        """
+        comprehensive_stats = self.stats_manager.collect_and_calculate(self)
+        
+        # Combine raw and calculated summaries
+        raw_summary = comprehensive_stats["summary"]["raw"]
+        calculated_summary = comprehensive_stats["summary"]["calculated"]
+        
+        return f"{raw_summary}\n\n{calculated_summary}"
 
     def close(self):
         """Close the cache engine and release all resources including GPU VRAM segments."""
@@ -1382,7 +1404,3 @@ class VCacheEngine:
                 logger.error(f"Error releasing GPU connector resources: {e}")
         
         logger.info("TestCacheEngine closed and all resources released")
-        
-        
-        
-        

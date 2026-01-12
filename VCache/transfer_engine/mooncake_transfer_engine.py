@@ -6,12 +6,11 @@ This engine uses Mooncake's transfer engine for cross-GPU data transfers.
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple, Any
-import threading
 import time
 import os
 import torch
 
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
@@ -49,12 +48,22 @@ class MooncakeTransferEngine(TransferEngineInterface):
         self.gpu_id = gpu_id
         self.ipc_client = ipc_client
         
-        self.lock = threading.RLock()
         self.engine = None
         self.initialized = False
         
         # Registered memory addresses for cleanup
         self._registered_segments: List[int] = []
+        
+        # Statistics tracking
+        self.stats = {
+            "successful_transfers": 0,
+            "failed_transfers": 0,
+            "total_transfer_bytes": 0,
+            "successful_registers": 0,
+            "failed_registers": 0,
+            "successful_unregisters": 0,
+            "failed_unregisters": 0
+        }
         
         # Initialize the engine
         self._initialize_transfer_engine()
@@ -119,6 +128,7 @@ class MooncakeTransferEngine(TransferEngineInterface):
         """
         if not self.initialized or not self.engine:
             logger.warning("Transfer engine not initialized, cannot register segment")
+            self.stats["failed_registers"] += 1
             return False
         
         try:
@@ -132,18 +142,20 @@ class MooncakeTransferEngine(TransferEngineInterface):
                              f"size={size} bytes")
                 
                 # Save base_address for cleanup during shutdown
-                with self.lock:
-                    self._registered_segments.append(base_address)
+                self._registered_segments.append(base_address)
+                self.stats["successful_registers"] += 1
                 
                 return True
             else:
                 logger.error(f"Failed to register segment {segment_id}"
                              f" on GPU {gpu_id}: "
                              f" error code {ret}")
+                self.stats["failed_registers"] += 1
                 return False
                 
         except Exception as e:
             logger.error(f"Exception registering segment {segment_id}: {e}")
+            self.stats["failed_registers"] += 1
             return False
     
     def unregister_segment(
@@ -165,13 +177,13 @@ class MooncakeTransferEngine(TransferEngineInterface):
         """
         if not self.initialized or not self.engine:
             logger.warning("Transfer engine not initialized, cannot unregister segment")
+            self.stats["failed_unregisters"] += 1
             return False
         
         try:
             # Remove from registered segments list if present
-            with self.lock:
-                if base_address in self._registered_segments:
-                    self._registered_segments.remove(base_address)
+            if base_address in self._registered_segments:
+                self._registered_segments.remove(base_address)
             
             # Unregister the memory from transfer engine
             ret = self.engine.unregister_memory(base_address)
@@ -180,15 +192,18 @@ class MooncakeTransferEngine(TransferEngineInterface):
                 logger.info(f"Successfully unregistered segment {segment_id}, "
                             f"GPU {gpu_id}: "
                             f"address={hex(base_address)}")
+                self.stats["successful_unregisters"] += 1
                 return True
             else:
                 logger.error(f"Failed to unregister segment {segment_id} "
                              f"on GPU {gpu_id}: "
                              f"error code {ret}")
+                self.stats["failed_unregisters"] += 1
                 return False
                 
         except Exception as e:
             logger.error(f"Exception unregistering segment {segment_id}: {e}")
+            self.stats["failed_unregisters"] += 1
             return False
     
     def transfer_gpu_to_gpu(
@@ -224,6 +239,7 @@ class MooncakeTransferEngine(TransferEngineInterface):
         """
         if not self.initialized or not self.engine:
             logger.warning("Mooncake transfer engine not available for cross-GPU transfer")
+            self.stats["failed_transfers"] += 1
             return False
         
         logger.info(f"Transferring from host:{src_hostname}, "
@@ -267,15 +283,19 @@ class MooncakeTransferEngine(TransferEngineInterface):
             # Restore original device
             torch.cuda.set_device(original_device)
             
+            self.stats["total_transfer_bytes"] += size
+                
             if ret == 0:
                 logger.info(f"Cross-GPU transfer successful: "
                             f"{src_hostname}:GPU{source_gpu} -> {target_hostname}:GPU{target_gpu}, "
                             f"size: {size} bytes, time: {transfer_time:.3f}s")
+                self.stats["successful_transfers"] += 1
                 return True
             else:
                 logger.error(f"Cross-GPU transfer failed: "
                              f"{src_hostname}:GPU{source_gpu} -> {target_hostname}:GPU{target_gpu}, "
                             f"error code: {ret}")
+                self.stats["failed_transfers"] += 1
                 return False
                 
         except Exception as e:
@@ -285,6 +305,7 @@ class MooncakeTransferEngine(TransferEngineInterface):
                 torch.cuda.set_device(original_device)
             except:
                 pass
+            self.stats["failed_transfers"] += 1
             return False
 
     def get_status(self) -> Dict[str, Any]:
@@ -294,23 +315,22 @@ class MooncakeTransferEngine(TransferEngineInterface):
         Returns:
             Dictionary containing engine status and health information
         """
-        with self.lock:
-            status = {}
-            
-            # Add engine status information
-            status['engine_type'] = 'MooncakeTransferEngine'
-            status['initialized'] = self.initialized
-            status['mooncake_available'] = TRANSFER_ENGINE_AVAILABLE
-            status['gpu_id'] = self.gpu_id
-            
-            # Add registered segments count
-            status['registered_segments'] = len(self._registered_segments)
-            
-            # Add configuration info
-            status['local_hostname'] = self.config.get_extra_config_value("local_hostname_TE", "localhost")
-            status['protocol'] = self.config.get_extra_config_value("protocol_TE", "nvlink")
-            
-            return status
+        status = {}
+        
+        # Add engine status information
+        status['engine_type'] = 'MooncakeTransferEngine'
+        
+        # Add registered segments count
+        status['registered_segments'] = len(self._registered_segments)
+        
+        # Add configuration info
+        status['local_hostname'] = self.config.get_extra_config_value("local_hostname_TE", "localhost")
+        status['metadata_server'] = self.config.get_extra_config_value("metadata_server", "http://localhost:8080/metadata")
+        status['device_name'] = self.config.get_extra_config_value("device_name", "")
+        # Add statistics directly to status dictionary
+        status.update(self.stats)
+        
+        return status
 
     def shutdown(self) -> bool:
         """
@@ -319,44 +339,43 @@ class MooncakeTransferEngine(TransferEngineInterface):
         Returns:
             True if shutdown successful, False otherwise
         """
-        with self.lock:
-            logger.info("Shutting down Mooncake transfer engine")
+        logger.info("Shutting down Mooncake transfer engine")
+        
+        if not self.initialized or not self.engine:
+            logger.info("Mooncake transfer engine not initialized, nothing to shutdown")
+            return True
+        
+        try:
+            # Unregister all registered memory addresses first
+            for base_address in self._registered_segments:
+                try:
+                    self.engine.unregister_memory(base_address)
+                    logger.debug(f"Unregistered memory at "
+                                 f"address {hex(base_address)} from transfer engine")
+                except Exception as e:
+                    logger.warning(f"Failed to unregister memory at "
+                                   f"address {hex(base_address)}: {e}")
+            self._registered_segments.clear()
             
-            if not self.initialized or not self.engine:
-                logger.info("Mooncake transfer engine not initialized, nothing to shutdown")
-                return True
+            # If transfer engine has a shutdown method, call it
+            if hasattr(self.engine, 'shutdown'):
+                ret = self.engine.shutdown()
+                if ret == 0:
+                    logger.debug("Mooncake transfer engine shutdown completed successfully")
+                else:
+                    logger.error(f"Mooncake transfer engine shutdown failed with error code: {ret}")
+                    return False
             
-            try:
-                # Unregister all registered memory addresses first
-                for base_address in self._registered_segments:
-                    try:
-                        self.engine.unregister_memory(base_address)
-                        logger.debug(f"Unregistered memory at "
-                                     f"address {hex(base_address)} from transfer engine")
-                    except Exception as e:
-                        logger.warning(f"Failed to unregister memory at "
-                                       f"address {hex(base_address)}: {e}")
-                self._registered_segments.clear()
-                
-                # If transfer engine has a shutdown method, call it
-                if hasattr(self.engine, 'shutdown'):
-                    ret = self.engine.shutdown()
-                    if ret == 0:
-                        logger.debug("Mooncake transfer engine shutdown completed successfully")
-                    else:
-                        logger.error(f"Mooncake transfer engine shutdown failed with error code: {ret}")
-                        return False
-                
-                # Reset engine state
-                self.engine = None
-                self.initialized = False
-                
-                logger.info("Mooncake transfer engine shutdown completed")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Error during Mooncake transfer engine shutdown: {e}")
-                return False
+            # Reset engine state
+            self.engine = None
+            self.initialized = False
+            
+            logger.info("Mooncake transfer engine shutdown completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during Mooncake transfer engine shutdown: {e}")
+            return False
 
     # Optional convenience methods with default implementations
     

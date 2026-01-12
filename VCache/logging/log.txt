@@ -1,0 +1,407 @@
+root@dgpu05:/workspace/LMCache/lmcache/vcache/tests# VCACHE_LOG_LEVEL=DEBUG python3 test_cross_gpu_store_retrieve.py 
+VCache logging: Log level set from environment: DEBUG
+2026-01-12 06:17:29 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:21 - Mooncake store is available
+Cross-GPU Store and Retrieve Test
+Store on GPU0, Retrieve on GPU1
+============================================================
+================================================================================
+Cross-GPU Store and Retrieve Test
+Store on GPU0, Retrieve on GPU1
+================================================================================
+Available GPUs: 2
+
+1. Creating configuration for GPU0...
+✓ Successfully loaded config from file: ../vcache_config_gpu0.yaml
+
+2. Creating configuration for GPU1...
+✓ Successfully loaded config from file: ../vcache_config_gpu1.yaml
+
+3. Creating metadata...
+
+4. Creating test data...
+Number of tokens: 512
+Number of blocks: 32
+Slot mapping data length: 512
+Slot mapping sample: [111, 230, 80, 206, 403]... (random mapping)
+Sample slots to check: [111, 230, 80, 206, 403]
+KV cache template created on GPU0
+KV cache[0] address: 0x7f4c57a00000
+
+5. Setting up inter-process communication...
+
+6. Starting processes...
+
+7. Waiting for processes to complete...
+VCache logging: Log level set from environment: DEBUG
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:21 - Mooncake store is available
+VCache logging: Log level set from environment: DEBUG
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:21 - Mooncake store is available
+[Store Process GPU0] Starting store process...
+[Store Process GPU0] Store KV cache created using generate_kv_cache_paged_list_tensors on GPU0
+[Store Process GPU0] Store KV cache[0] address: 0x7f81cfe01000
+[Store Process GPU0] Store KV cache shape: torch.Size([2, 32, 16, 8, 64])
+[Store Process GPU0] Creating VCacheEngine...
+2026-01-12 06:17:31 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:44 - Creating VCacheEngine with config: VCacheConfig(connector_role='worker', chunk_size=256, enable_gpu_vram_pool=True, use_vram_metadata_server=True, max_gpu_vram_metadata_size=10000, gpu_vram_segment_size_mb=256, enable_gpu_vram_segments=True, local_hostname='192.168.1.86:12345', global_segment_size=631242752, local_buffer_size=631242752, master_server_address='192.168.1.86:50051', metadata_server='http://192.168.1.86:8080/metadata', vram_metadata_ipc_address='192.168.1.86', vram_metadata_ipc_port=9091, vram_metadata_ipc_retry_count=3, transfer_engine_type='nvlink', gpu_id=0, max_concurrent_transfers=8, transfer_timeout_sec=30, local_hostname_TE='192.168.1.86:13245', protocol='tcp', protocol_TE='nvlink', device_name='')
+2026-01-12 06:17:31 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:54 - GPU VRAM pool manager is initializing...
+[Retrieve Process GPU1] Starting retrieve process...
+[Retrieve Process GPU1] Waiting for store process on GPU0 to complete...
+2026-01-12 06:17:31 - lmcache.vcache.vcache.vram_metadata_ipc_client - DEBUG - vram_metadata_ipc_client.py:97 - Connection test successful: {'status': 'healthy', 'server_running': True, 'timestamp': 1768220251.4588547, 'address': '192.168.1.86', 'port': 9091}
+2026-01-12 06:17:31 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:102 - Successfully connected to IPC server on attempt 1
+2026-01-12 06:17:31 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:59 - VRAM Metadata IPC Client initialized for server: 192.168.1.86:9091
+2026-01-12 06:17:31 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:63 - VRAM metadata IPC client connected successfully
+2026-01-12 06:17:31 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:26 - Initializing transfer engine: type=nvlink, gpu_id=0
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:175 - GPU 0 can access GPU 1 (peer access enabled)
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:122 - Loaded native nvlink helper: ../native/build/libnvlink_transfer.so
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:197 - Initializing NVLINK transfer engine for 2 GPUs
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:206 - Peer access already enabled from GPU 0 to GPU 1
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:206 - Peer access already enabled from GPU 1 to GPU 0
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:237 - Transfer worker thread started
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:233 - Transfer worker thread started
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:108 - Distributed NVLINK Transfer Engine initialized for GPU 0. NVLINK available: True
+2026-01-12 06:17:31 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:39 - NVLINK transfer engine initialized successfully for GPU 0
+2026-01-12 06:17:31 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:602 - Allocated GPU VRAM segment on GPU 0: 256MB, address: 0x7f81a8000000, segment_id: gpu_0_segment_0
+2026-01-12 06:17:31 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:418 - Registered segment IPC handle via IPC: gpu_0_segment_0 @ 0x7f81a8000000
+2026-01-12 06:17:31 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:1180 - Registered segment gpu_0_segment_0 via IPC client
+2026-01-12 06:17:31 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:620 - Registered segment gpu_0_segment_0 via transfer engine manager
+2026-01-12 06:17:31 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:552 - GPU VRAM Segment Manager initialized for GPU 0
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:64 - Using HTTP metadata server: http://192.168.1.86:8080/metadata
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:76 - mooncake storage backend using TCP protocol with device: 
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:78 - Initializing Mooncake store with config:
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:79 -   local_hostname: 192.168.1.86:12345
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:80 -   metadata_server: http://192.168.1.86:8080/metadata
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:81 -   protocol: tcp
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:82 -   device_name: 
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:83 -   global_segment_size: 631242752 bytes
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:84 -   local_buffer_size: 631242752 bytes
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:85 -   master_server_address: 192.168.1.86:50051
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0112 06:17:31.893422   849 client_metric.cpp:76] Client metrics enabled (default enabled)
+I0112 06:17:31.895020   849 ha_helper.cpp:20] Master view key: mooncake-store/mooncake/master_view
+I0112 06:17:31.895051   849 client.cpp:46] client_id=2830933461135191742-691106349899198857
+I0112 06:17:31.895076   849 client.cpp:54] Client metrics enabled but reporting disabled (interval=0)
+I0112 06:17:31.896581   849 client.cpp:373] Storage root directory is not set. persisting data is disabled.
+I0112 06:17:31.926822   849 transfer_engine.cpp:486] Metrics reporting is disabled (set MC_TE_METRIC=1 to enable)
+I0112 06:17:31.926879   849 transfer_engine.cpp:91] Transfer Engine parseHostNameWithPort. server_name: 192.168.1.86 port: 12345
+I0112 06:17:31.927239   849 transfer_metadata_plugin.cpp:1127] Found active interface enp1s0f0 with IP 192.168.1.86
+I0112 06:17:31.927253   849 transfer_metadata_plugin.cpp:1116] Skipping interface docker0 (not UP or not RUNNING)
+I0112 06:17:31.927285   849 transfer_engine.cpp:146] Transfer Engine RPC using new RPC mapping, listening on 192.168.1.86:16552
+I0112 06:17:31.927788   849 client.cpp:268] Transfer engine auto discovery is disabled for protocol: tcp
+I0112 06:17:31.928050   849 tcp_transport.cpp:311] TcpTransport: listen on port 16891
+I0112 06:17:31.949555   849 pybind_client.cpp:196] Registering local memory: 631242752 bytes
+I0112 06:17:31.949940   849 pybind_client.cpp:220] Mounting segment: 631242752 bytes, 631242752 of 631242752
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:103 - Mooncake store client setup successful
+2026-01-12 06:17:31 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:104 - Mooncake storage backend initialized for GPU 0
+WARNING: Using builtin hash without PYTHONHASHSEED set. For production environments, set PYTHONHASHSEED=0 to ensure consistent hashing across processes.
+2026-01-12 06:17:32 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:71 - BlockedKVPagedMemConnector initialized: layers=4, block_size=16, heads=8, head_size=64
+2026-01-12 06:17:32 - lmcache.vcache.stats.stats_manager - DEBUG - stats_manager.py:35 - StatsManager initialized
+2026-01-12 06:17:32 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:156 - VCacheEngine initialized for GPU 0 with connector_role=worker
+[Store Process GPU0] Performing store operation...
+2026-01-12 06:17:32 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:942 - Store operation: 512 tokens, kvcaches=4, slot_mapping=True, offset=0
+2026-01-12 06:17:32 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:961 - Processing chunk/prefix [0, 256): 256 tokens, key: fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half
+2026-01-12 06:17:33 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:748 - Allocated 2097152 bytes in segment gpu_0_segment_0 on GPU 0, offset: 0, block_size: 2097152
+2026-01-12 06:17:33 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:425 - Registered VRAM unit fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half in segment gpu_0_segment_0
+2026-01-12 06:17:33 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:1029 - Created VRAM unit for flattened data: fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half at segment gpu_0_segment_0, offset 0, size 2097152 bytes, dtype torch.float16, elements: 1048576, original_shape: None
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1038 - Created VRAM Unit: fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half at segment gpu_0_segment_0, offset 0, size 2097152 bytes, shape (16, 32, 16, 8, 64), tokens 256
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:300 - Initialized kvcaches pointer with 4 layers
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:112 - KV cache pointers initialized: 4 layers, page_buffer_size=512
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:396 - Using existing pointers for device cuda:0 in download
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:243 - Reverse format conversion: torch.Size([2, 4, 256, 512]) -> torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:453 - Converted from Flash Attention format: torch.Size([2, 4, 256, 512]) -> torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:458 - Download completed: 256 tokens for all 4 layers
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1079 - Successfully downloaded blocked KV cache data: shape=torch.Size([4, 16, 2, 16, 8, 64]), device=cuda:0, dtype=torch.float16
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1115 - Copied flattened tensor to VRAM segment: 2097152 bytes
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1204 - Extracted chunk KV cache parameters: num_layers=4, block_size=16, num_heads=8, head_size=64
+2026-01-12 06:17:33 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:211 - Successfully registered KV cache via IPC - Key: b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87', GPU: 0, Segment offset: 0
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1229 - Successfully registered KV cache chunk in GPU VRAM pool: 256 tokens, GPU 0, segment=gpu_0_segment_0, address=0x7f81a8000000, size=2097152 bytes, segment_offset=0, shape=torch.Size([4, 16, 2, 16, 8, 64]), dtype=torch.float16, key_chunk_hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'
+2026-01-12 06:17:33 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:312 - Mooncake store: 256 chunk tokens stored with key b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87', data_size=2097152 bytes
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1141 - Successfully stored KV cache for chunk [0, 256): 256 tokens with unified cache key,
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1150 - Released temp tensor memory for chunk 0:256
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:961 - Processing chunk/prefix [256, 512): 256 tokens, key: fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half
+2026-01-12 06:17:33 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:748 - Allocated 2097152 bytes in segment gpu_0_segment_0 on GPU 0, offset: 2097152, block_size: 2097152
+2026-01-12 06:17:33 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:425 - Registered VRAM unit fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half in segment gpu_0_segment_0
+2026-01-12 06:17:33 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:1029 - Created VRAM unit for flattened data: fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half at segment gpu_0_segment_0, offset 2097152, size 2097152 bytes, dtype torch.float16, elements: 1048576, original_shape: None
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1038 - Created VRAM Unit: fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half at segment gpu_0_segment_0, offset 2097152, size 2097152 bytes, shape (16, 32, 16, 8, 64), tokens 256
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:300 - Initialized kvcaches pointer with 4 layers
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:112 - KV cache pointers initialized: 4 layers, page_buffer_size=512
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:396 - Using existing pointers for device cuda:0 in download
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:243 - Reverse format conversion: torch.Size([2, 4, 256, 512]) -> torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:453 - Converted from Flash Attention format: torch.Size([2, 4, 256, 512]) -> torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:33 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:458 - Download completed: 256 tokens for all 4 layers
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1079 - Successfully downloaded blocked KV cache data: shape=torch.Size([4, 16, 2, 16, 8, 64]), device=cuda:0, dtype=torch.float16
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1115 - Copied flattened tensor to VRAM segment: 2097152 bytes
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1204 - Extracted chunk KV cache parameters: num_layers=4, block_size=16, num_heads=8, head_size=64
+2026-01-12 06:17:33 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:211 - Successfully registered KV cache via IPC - Key: b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe', GPU: 0, Segment offset: 2097152
+2026-01-12 06:17:33 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1229 - Successfully registered KV cache chunk in GPU VRAM pool: 256 tokens, GPU 0, segment=gpu_0_segment_0, address=0x7f81a8200000, size=2097152 bytes, segment_offset=2097152, shape=torch.Size([4, 16, 2, 16, 8, 64]), dtype=torch.float16, key_chunk_hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'
+2026-01-12 06:17:34 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:312 - Mooncake store: 256 chunk tokens stored with key b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe', data_size=2097152 bytes
+2026-01-12 06:17:34 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1141 - Successfully stored KV cache for chunk [256, 512): 256 tokens with unified cache key,
+2026-01-12 06:17:34 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:1150 - Released temp tensor memory for chunk 256:512
+2026-01-12 06:17:34 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1153 - Store operation completed for 512 tokens
+[Store Process GPU0] Store completed in 1.1385 seconds
+[Store Process GPU0] Signaled retrieve process to start
+[Retrieve Process GPU1] Store process completed, waiting for 1 second before starting retrieve...
+[Retrieve Process GPU1] Starting retrieve after waiting...
+[Retrieve Process GPU1] Retrieve KV cache created using generate_kv_cache_paged_list_tensors on GPU1
+[Retrieve Process GPU1] Retrieve KV cache[0] address: 0x7f3cb3a01000
+[Retrieve Process GPU1] Retrieve KV cache shape: torch.Size([2, 32, 16, 8, 64])
+[Retrieve Process GPU1] Creating VCacheEngine...
+2026-01-12 06:17:35 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:44 - Creating VCacheEngine with config: VCacheConfig(connector_role='worker', chunk_size=256, enable_gpu_vram_pool=True, use_vram_metadata_server=True, max_gpu_vram_metadata_size=10000, gpu_vram_segment_size_mb=256, enable_gpu_vram_segments=True, local_hostname='192.168.1.86:12346', global_segment_size=631242752, local_buffer_size=631242752, master_server_address='192.168.1.86:50051', metadata_server='http://192.168.1.86:8080/metadata', vram_metadata_ipc_address='192.168.1.86', vram_metadata_ipc_port=9091, vram_metadata_ipc_retry_count=3, transfer_engine_type='nvlink', gpu_id=1, max_concurrent_transfers=8, transfer_timeout_sec=30, local_hostname_TE='192.168.1.86:13246', protocol='tcp', protocol_TE='nvlink', device_name='')
+2026-01-12 06:17:35 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:54 - GPU VRAM pool manager is initializing...
+2026-01-12 06:17:35 - lmcache.vcache.vcache.vram_metadata_ipc_client - DEBUG - vram_metadata_ipc_client.py:97 - Connection test successful: {'status': 'healthy', 'server_running': True, 'timestamp': 1768220255.2188065, 'address': '192.168.1.86', 'port': 9091}
+2026-01-12 06:17:35 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:102 - Successfully connected to IPC server on attempt 1
+2026-01-12 06:17:35 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:59 - VRAM Metadata IPC Client initialized for server: 192.168.1.86:9091
+2026-01-12 06:17:35 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:63 - VRAM metadata IPC client connected successfully
+2026-01-12 06:17:35 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:26 - Initializing transfer engine: type=nvlink, gpu_id=1
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:175 - GPU 0 can access GPU 1 (peer access enabled)
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:122 - Loaded native nvlink helper: ../native/build/libnvlink_transfer.so
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:197 - Initializing NVLINK transfer engine for 2 GPUs
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:206 - Peer access already enabled from GPU 0 to GPU 1
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:206 - Peer access already enabled from GPU 1 to GPU 0
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:237 - Transfer worker thread started
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:233 - Transfer worker thread started
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:108 - Distributed NVLINK Transfer Engine initialized for GPU 1. NVLINK available: True
+2026-01-12 06:17:35 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:39 - NVLINK transfer engine initialized successfully for GPU 1
+2026-01-12 06:17:35 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:602 - Allocated GPU VRAM segment on GPU 1: 256MB, address: 0x7f3c8c000000, segment_id: gpu_1_segment_0
+2026-01-12 06:17:35 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:418 - Registered segment IPC handle via IPC: gpu_1_segment_0 @ 0x7f3c8c000000
+2026-01-12 06:17:35 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:1180 - Registered segment gpu_1_segment_0 via IPC client
+2026-01-12 06:17:35 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:620 - Registered segment gpu_1_segment_0 via transfer engine manager
+2026-01-12 06:17:35 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:552 - GPU VRAM Segment Manager initialized for GPU 1
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:64 - Using HTTP metadata server: http://192.168.1.86:8080/metadata
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:76 - mooncake storage backend using TCP protocol with device: 
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:78 - Initializing Mooncake store with config:
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:79 -   local_hostname: 192.168.1.86:12346
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:80 -   metadata_server: http://192.168.1.86:8080/metadata
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:81 -   protocol: tcp
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:82 -   device_name: 
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:83 -   global_segment_size: 631242752 bytes
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:84 -   local_buffer_size: 631242752 bytes
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:85 -   master_server_address: 192.168.1.86:50051
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I0112 06:17:35.648908   850 client_metric.cpp:76] Client metrics enabled (default enabled)
+I0112 06:17:35.650293   850 ha_helper.cpp:20] Master view key: mooncake-store/mooncake/master_view
+I0112 06:17:35.650318   850 client.cpp:46] client_id=16522065814226317242-8832905241710488457
+I0112 06:17:35.650332   850 client.cpp:54] Client metrics enabled but reporting disabled (interval=0)
+I0112 06:17:35.651695   850 client.cpp:373] Storage root directory is not set. persisting data is disabled.
+I0112 06:17:35.651758   850 transfer_engine.cpp:486] Metrics reporting is disabled (set MC_TE_METRIC=1 to enable)
+I0112 06:17:35.651773   850 transfer_engine.cpp:91] Transfer Engine parseHostNameWithPort. server_name: 192.168.1.86 port: 12346
+I0112 06:17:35.652068   850 transfer_metadata_plugin.cpp:1127] Found active interface enp1s0f0 with IP 192.168.1.86
+I0112 06:17:35.652079   850 transfer_metadata_plugin.cpp:1116] Skipping interface docker0 (not UP or not RUNNING)
+I0112 06:17:35.652102   850 transfer_engine.cpp:146] Transfer Engine RPC using new RPC mapping, listening on 192.168.1.86:15232
+I0112 06:17:35.652567   850 client.cpp:268] Transfer engine auto discovery is disabled for protocol: tcp
+I0112 06:17:35.652889   850 tcp_transport.cpp:311] TcpTransport: listen on port 16352
+I0112 06:17:35.677956   850 pybind_client.cpp:196] Registering local memory: 631242752 bytes
+I0112 06:17:35.678399   850 pybind_client.cpp:220] Mounting segment: 631242752 bytes, 631242752 of 631242752
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:103 - Mooncake store client setup successful
+2026-01-12 06:17:35 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:104 - Mooncake storage backend initialized for GPU 1
+WARNING: Using builtin hash without PYTHONHASHSEED set. For production environments, set PYTHONHASHSEED=0 to ensure consistent hashing across processes.
+2026-01-12 06:17:36 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:71 - BlockedKVPagedMemConnector initialized: layers=4, block_size=16, heads=8, head_size=64
+2026-01-12 06:17:36 - lmcache.vcache.stats.stats_manager - DEBUG - stats_manager.py:35 - StatsManager initialized
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:156 - VCacheEngine initialized for GPU 1 with connector_role=worker
+[Retrieve Process GPU1] Performing retrieve operation...
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:333 - Retrieve operation: 512 tokens,mask=True, kvcaches=4,slot_mapping=True
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:352 - Generated chunk [0, 256): 256 tokens, key: fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:352 - Generated chunk [256, 512): 256 tokens, key: fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:368 - batch_get_entry - Got 2 entries, 2 non-None entries
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:385 - GPU VRAM hit for chunk [0, 256), key: fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half, chunk_hash: b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87',gpu_id: 0, needs_transfer: True
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:385 - GPU VRAM hit for chunk [256, 512), key: fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half, chunk_hash: b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe',gpu_id: 0, needs_transfer: True
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:395 - Found 2 GPU VRAM hits out of 2 chunks needing retrieval
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:417 - Found 2 continuous GPU VRAM hits from the beginning,covering tokens [0, 512)
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:428 - Processing 0 local GPU VRAM hits and 2 remote GPU VRAM hits
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:746 - Processing 2 remote GPU VRAM hits
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:758 - Processing remote hit chunk [0, 256): 256 tokens from GPU 0
+2026-01-12 06:17:36 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:748 - Allocated 2097152 bytes in segment gpu_1_segment_0 on GPU 1, offset: 0, block_size: 2097152
+2026-01-12 06:17:36 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:781 - Allocated segment space: 2097152 bytes at address 0x7f3c8c000000 for remote GPU VRAM hit data
+2026-01-12 06:17:36 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:181 - Starting cross-GPU transfer:GPU 0 -> GPU 1,size: 2097152 bytes
+2026-01-12 06:17:37 - lmcache.vcache.vcache.transfer_engine_manager - DEBUG - transfer_engine_manager.py:149 - Obtained IPC mem handle for source buffer 0x7f81a8000000 on GPU 0 via IPC client: segment base 0x7f81a8000000, size 268435456
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:549 - Submitted transfer request transfer_1768220257155_1: GPU 0 -> GPU 1, size: 2097152 bytes, sync: True
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:269 - Started transfer transfer_1768220257155_1: GPU 0 -> GPU 1, size: 2097152 bytes
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:461 - Direct transfer submitted asynchronously: GPU 0->1, size=2097152 bytes (2.00 MB)
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:327 - Transfer transfer_1768220257155_1 completed synchronously: GPU 0 -> GPU 1, size: 2097152 bytes, time: 0.009s
+2026-01-12 06:17:37 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:180 - Cross-GPU transfer successful: 192.168.1.86:13245:GPU 0 -> 192.168.1.86:13246:GPU 1, size: 2097152 bytes, latency: 0.010s
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:203 - Cross-GPU transfer completed: GPU 0 -> GPU 1, size: 2097152 bytes, src_offset: 0, dst_offset: 0
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:800 - Successfully transferred 256 tokens from GPU 0 to segment space
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:235 - Registering transferred entry in GPU VRAM pool: GPU 1, address: 0x7f3c8c000000, segment_id: gpu_1_segment_0, segment_offset: 0
+2026-01-12 06:17:37 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:211 - Successfully registered KV cache via IPC - Key: b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87', GPU: 1, Segment offset: 0
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:255 - Successfully registered transferred entry in GPU VRAM pool:256 tokens on GPU 1 at address 0x7f3c8c000000 segment_id: gpu_1_segment_0 segment_offset: 0
+2026-01-12 06:17:37 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:425 - Registered VRAM unit fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half in segment gpu_1_segment_0
+2026-01-12 06:17:37 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:1029 - Created VRAM unit for flattened data: fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half at segment gpu_1_segment_0, offset 0, size 2097152 bytes, dtype torch.float16, elements: 1048576, original_shape: torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:37 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:851 - Restored tensor for chunk [0, 256): shape=torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:37 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:758 - Processing remote hit chunk [256, 512): 256 tokens from GPU 0
+2026-01-12 06:17:37 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:748 - Allocated 2097152 bytes in segment gpu_1_segment_0 on GPU 1, offset: 2097152, block_size: 2097152
+2026-01-12 06:17:37 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:781 - Allocated segment space: 2097152 bytes at address 0x7f3c8c200000 for remote GPU VRAM hit data
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:181 - Starting cross-GPU transfer:GPU 0 -> GPU 1,size: 2097152 bytes
+2026-01-12 06:17:37 - lmcache.vcache.vcache.transfer_engine_manager - DEBUG - transfer_engine_manager.py:149 - Obtained IPC mem handle for source buffer 0x7f81a8200000 on GPU 0 via IPC client: segment base 0x7f81a8000000, size 268435456
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:549 - Submitted transfer request transfer_1768220257563_2: GPU 0 -> GPU 1, size: 2097152 bytes, sync: True
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:269 - Started transfer transfer_1768220257563_2: GPU 0 -> GPU 1, size: 2097152 bytes
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:461 - Direct transfer submitted asynchronously: GPU 0->1, size=2097152 bytes (2.00 MB)
+2026-01-12 06:17:37 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:327 - Transfer transfer_1768220257563_2 completed synchronously: GPU 0 -> GPU 1, size: 2097152 bytes, time: 0.002s
+2026-01-12 06:17:37 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:180 - Cross-GPU transfer successful: 192.168.1.86:13245:GPU 0 -> 192.168.1.86:13246:GPU 1, size: 2097152 bytes, latency: 0.010s
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:203 - Cross-GPU transfer completed: GPU 0 -> GPU 1, size: 2097152 bytes, src_offset: 0, dst_offset: 2097152
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:800 - Successfully transferred 256 tokens from GPU 0 to segment space
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:235 - Registering transferred entry in GPU VRAM pool: GPU 1, address: 0x7f3c8c200000, segment_id: gpu_1_segment_0, segment_offset: 2097152
+2026-01-12 06:17:37 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:211 - Successfully registered KV cache via IPC - Key: b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe', GPU: 1, Segment offset: 2097152
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:255 - Successfully registered transferred entry in GPU VRAM pool:256 tokens on GPU 1 at address 0x7f3c8c200000 segment_id: gpu_1_segment_0 segment_offset: 2097152
+2026-01-12 06:17:37 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:425 - Registered VRAM unit fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half in segment gpu_1_segment_0
+2026-01-12 06:17:37 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:1029 - Created VRAM unit for flattened data: fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half at segment gpu_1_segment_0, offset 2097152, size 2097152 bytes, dtype torch.float16, elements: 1048576, original_shape: torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:37 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:851 - Restored tensor for chunk [256, 512): shape=torch.Size([4, 16, 2, 16, 8, 64])
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:300 - Initialized kvcaches pointer with 4 layers
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:112 - KV cache pointers initialized: 4 layers, page_buffer_size=512
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:485 - Batch upload: 2 chunks
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:494 - Processing chunk 0: 256 tokens
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:181 - Format conversion: torch.Size([4, 16, 2, 16, 8, 64]) -> torch.Size([2, 4, 256, 512])
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:332 - Converted to Flash Attention format: torch.Size([4, 16, 2, 16, 8, 64]) -> torch.Size([2, 4, 256, 512])
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:340 - Using existing pointers for device cuda:1
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:366 - Upload completed: 256 tokens for all 4 layers
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:494 - Processing chunk 1: 256 tokens
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:181 - Format conversion: torch.Size([4, 16, 2, 16, 8, 64]) -> torch.Size([2, 4, 256, 512])
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:332 - Converted to Flash Attention format: torch.Size([4, 16, 2, 16, 8, 64]) -> torch.Size([2, 4, 256, 512])
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:340 - Using existing pointers for device cuda:1
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - INFO - blocked_kv_paged_connector.py:366 - Upload completed: 256 tokens for all 4 layers
+2026-01-12 06:17:37 - lmcache.vcache.vcache.blocked_kv_paged_connector - DEBUG - blocked_kv_paged_connector.py:510 - Batch upload completed: 2 batches, 512 total tokens for all 4 layers
+2026-01-12 06:17:37 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:885 - Marked 256 tokens for chunk [0, 256) as retrieved
+2026-01-12 06:17:37 - vcache.vcache_engine_system - DEBUG - vcache_engine_system.py:885 - Marked 256 tokens for chunk [256, 512) as retrieved
+2026-01-12 06:17:37 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:887 - Processed 2 remote GPU VRAM hits via batch upload, copied 512 tokens
+[Retrieve Process GPU1] Retrieve completed in 1.1287 seconds
+[Retrieve Process GPU1] Retrieved tokens: 512/512
+[Retrieve Process GPU1] Engine stats summary: VCache Engine Stats (GPU 1, worker):
+  Uptime: 1.13s
+  Operations: 0 lookups, 0 stores, 0 retrieves
+  Hits: 0, Misses: 0
+  GPU VRAM Hits: 0, GPU VRAM Misses: 0
+  Cross-GPU Transfers: 0
+  GPU VRAM: 1 segments, 4,194,304 bytes used / 268,435,456 bytes total, Allocations: 2, Deallocations: 0
+  VRAM Metadata: 7 requests, Failed: 0
+  Storage Backend: 0 stores, 0 retrieves, 0 hit tokens
+
+=== Calculated Statistics Metrics ===
+VCache Engine:
+  Hit Rate: 0.00%
+  GPU VRAM Hit Rate: 0.00%
+  Cross-GPU Transfer Rate: 0.00%
+
+GPU VRAM:
+  Avg Segment Utilization: 1.56%
+  Total Segment Efficiency: 1.56%
+
+Transfer Engine:
+  Success Rate: 100.00%
+
+VRAM Metadata:
+  Request Success Rate: 100.00%
+
+Storage Backend:
+  Storage Hit Rate: 0.00%
+
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1362 - TestCacheEngine closing and releasing all resources
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:1073 - Shutting down GPU VRAM segment manager for GPU 1
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:443 - Unregistered VRAM unit fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half from segment gpu_1_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:443 - Unregistered VRAM unit fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half from segment gpu_1_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:510 - Cleared all VRAM units from segment gpu_1_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:900 - Cleaned up segment gpu_1_segment_0 metadata on GPU 1, freed all allocated blocks, reset free list, cleared VRAM units
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:910 - Released GPU tensor memory for segment gpu_1_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:1098 - GPU VRAM segment manager shutdown completed for GPU 1
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1368 - GPU VRAM segment manager shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:672 - Shutting down VRAM Metadata IPC Client
+2026-01-12 06:17:38 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:685 - VRAM Metadata IPC Client shutdown completed
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1376 - VRAM metadata IPC client shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:225 - Shutting down transfer engine
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:1105 - Shutting down NVLINK transfer engine
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:280 - Transfer worker thread stopped
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:1113 - Transfer worker thread stopped
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:1121 - NVLINK transfer engine shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:237 - Transfer engine shutdown completed successfully
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1384 - Transfer engine manager shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:474 - Closing Mooncake storage backend and releasing all resources
+2026-01-12 06:17:38 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:479 - Mooncake store client closed successfully
+2026-01-12 06:17:38 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:493 - Mooncake storage backend shutdown completed
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1392 - Storage backend closed
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1402 - GPU connector resources released
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1406 - TestCacheEngine closed and all resources released
+[Store Process GPU0] Retrieve process completed
+[Retrieve Process GPU1] Retrieve process completed successfully
+[Retrieve Process GPU0] Engine stats summary: VCache Engine Stats (GPU 0, worker):
+  Uptime: 5.75s
+  Operations: 0 lookups, 0 stores, 0 retrieves
+  Hits: 0, Misses: 0
+  GPU VRAM Hits: 0, GPU VRAM Misses: 0
+  Cross-GPU Transfers: 0
+  GPU VRAM: 1 segments, 4,194,304 bytes used / 268,435,456 bytes total, Allocations: 2, Deallocations: 0
+  VRAM Metadata: 6 requests, Failed: 0
+  Storage Backend: 2 stores, 0 retrieves, 0 hit tokens
+
+=== Calculated Statistics Metrics ===
+VCache Engine:
+  Hit Rate: 0.00%
+  GPU VRAM Hit Rate: 0.00%
+  Cross-GPU Transfer Rate: 0.00%
+
+GPU VRAM:
+  Avg Segment Utilization: 1.56%
+  Total Segment Efficiency: 1.56%
+
+Transfer Engine:
+  Success Rate: 0.00%
+
+VRAM Metadata:
+  Request Success Rate: 100.00%
+
+Storage Backend:
+  Storage Hit Rate: 0.00%
+
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1362 - TestCacheEngine closing and releasing all resources
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:1073 - Shutting down GPU VRAM segment manager for GPU 0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:443 - Unregistered VRAM unit fmt=vllm|model=test_model|hash=b'\xa8\xbf6l\x9dS\xe3\x0b\xffA\xcb\xf3\xfa\xb81s\x85E\x81\x8d\xb6\xc7\xd4]\xb3\xd7\xad\xaa\xe9LW\x87'|dtype=half from segment gpu_0_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:443 - Unregistered VRAM unit fmt=vllm|model=test_model|hash=b'\xd5-\xe2\x11Z#5\x91"\r\x8a;\x85\xbe\xa8>t\xe5\xb1\x04\xcc\x11X\x96\xc7s\\6\x1b[\xea\xbe'|dtype=half from segment gpu_0_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:510 - Cleared all VRAM units from segment gpu_0_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:900 - Cleaned up segment gpu_0_segment_0 metadata on GPU 0, freed all allocated blocks, reset free list, cleared VRAM units
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - DEBUG - gpu_vram_segment_manager.py:910 - Released GPU tensor memory for segment gpu_0_segment_0
+2026-01-12 06:17:38 - lmcache.vcache.vcache.gpu_vram_segment_manager - INFO - gpu_vram_segment_manager.py:1098 - GPU VRAM segment manager shutdown completed for GPU 0
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1368 - GPU VRAM segment manager shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:672 - Shutting down VRAM Metadata IPC Client
+2026-01-12 06:17:38 - lmcache.vcache.vcache.vram_metadata_ipc_client - INFO - vram_metadata_ipc_client.py:685 - VRAM Metadata IPC Client shutdown completed
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1376 - VRAM metadata IPC client shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:225 - Shutting down transfer engine
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:1105 - Shutting down NVLINK transfer engine
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - DEBUG - nvlink_transfer_engine.py:280 - Transfer worker thread stopped
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:1113 - Transfer worker thread stopped
+2026-01-12 06:17:38 - lmcache.vcache.transfer_engine.nvlink_transfer_engine - INFO - nvlink_transfer_engine.py:1121 - NVLINK transfer engine shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.transfer_engine_manager - INFO - transfer_engine_manager.py:237 - Transfer engine shutdown completed successfully
+2026-01-12 06:17:38 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1384 - Transfer engine manager shutdown completed
+2026-01-12 06:17:38 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:474 - Closing Mooncake storage backend and releasing all resources
+2026-01-12 06:17:40 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:479 - Mooncake store client closed successfully
+2026-01-12 06:17:40 - lmcache.vcache.vcache.mooncake_storage_backend - INFO - mooncake_storage_backend.py:493 - Mooncake storage backend shutdown completed
+2026-01-12 06:17:40 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1392 - Storage backend closed
+2026-01-12 06:17:40 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1402 - GPU connector resources released
+2026-01-12 06:17:40 - vcache.vcache_engine_system - INFO - vcache_engine_system.py:1406 - TestCacheEngine closed and all resources released
+[Store Process GPU0] Store process completed successfully
+
+8. Collecting results...
+
+9. Test Results:
+----------------------------------------
+Store Process (GPU0): SUCCESS
+  Store time: 1.1385 seconds
+  Store KV cache address: 0x7f81cfe01000
+Retrieve Process (GPU1): SUCCESS
+  Retrieve time: 1.1287 seconds
+  Retrieve KV cache address: 0x7f3cb3a01000
+  Retrieved tokens: 512/512
+
+  Data Comparison (based on slot_mapping):
+  Token/Slot           Store Value     Retrieve Value  Match     
+  -------------------- --------------- --------------- ----------
+  token_0_slot_111     0.17028809      0.17028809      ✓         
+  token_1_slot_230     0.22094727      0.22094727      ✓         
+  token_2_slot_80      0.33007812      0.33007812      ✓         
+  token_3_slot_206     0.78369141      0.78369141      ✓         
+  token_4_slot_403     0.03656006      0.03656006      ✓         
+
+  Data Match Summary:
+    All samples match: Yes
+    Mismatch count: 0
+  ✓ All data samples match perfectly!
+
+10. Overall Test Result:
+----------------------------------------
+✓ CROSS-GPU STORE/RETRIEVE TEST PASSED
+
+✓ CROSS-GPU TEST PASSED

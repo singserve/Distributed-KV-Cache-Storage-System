@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vcache.vcache_engine_system import VCacheEngine
 from lmcache.config import LMCacheEngineMetadata
-from vcache.vcache_config import VCacheConfig
+from lmcache.vcache.vcache_config import VCacheConfig
 
 
 
@@ -159,6 +159,9 @@ def store_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cache_
         done_event.wait()
         print(f"[Store Process GPU{gpu_id}] Retrieve process completed")
         
+        stats_sum = engine.get_stats_summary()
+        print(f"[Retrieve Process GPU{gpu_id}] Engine stats summary: {stats_sum}")
+        
         # 清理资源
         engine.close()
         
@@ -280,6 +283,9 @@ def retrieve_process(gpu_id, config, metadata, tokens, slot_mapping_data, kv_cac
             data = retrieve_kv_cache[0][0, block_idx, block_offset, 0, 0].item()
             retrieve_samples[f"token_{i}_slot_{slot}"] = data
                 # 清理资源
+        
+        stats_sum = engine.get_stats_summary()
+        print(f"[Retrieve Process GPU{gpu_id}] Engine stats summary: {stats_sum}")
         engine.close()
         
         # 通知store进程已完成
@@ -328,7 +334,7 @@ def test_cross_gpu_store_retrieve():
         
         # 1. 创建配置 - GPU0配置
         print("\n1. Creating configuration for GPU0...")
-        config_path_gpu0 = "./vcache_config_gpu0.yaml"
+        config_path_gpu0 = "../vcache_config_gpu0.yaml"
         try:
             config_gpu0 = VCacheConfig.from_file(config_path_gpu0)
             config_gpu0.connector_role = "worker"  
@@ -343,7 +349,7 @@ def test_cross_gpu_store_retrieve():
         
         # 2. 创建配置 - GPU1配置
         print("\n2. Creating configuration for GPU1...")
-        config_path_gpu1 = "./vcache_config_gpu1.yaml"
+        config_path_gpu1 = "../vcache_config_gpu1.yaml"
         try:
             config_gpu1 = VCacheConfig.from_file(config_path_gpu1)
             config_gpu1.connector_role = "worker"  

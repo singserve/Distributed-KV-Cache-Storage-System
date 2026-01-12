@@ -13,7 +13,7 @@ from multiprocessing.managers import BaseManager
 import torch
 
 from lmcache.vcache.vram_metadata_server.gpu_vram_pool_manager import GPUVRAMEntry
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
 from lmcache.vcache.utils import dtype_to_str,str_to_dtype
 
@@ -585,7 +585,6 @@ class VRAMMetadataIPCClient:
                     "client_stats": {
                         "total_requests": self.total_requests,
                         "failed_requests": self.failed_requests,
-                        "success_rate": (self.total_requests - self.failed_requests) / max(self.total_requests, 1),
                         "is_connected": self.is_connected,
                         "server_address": f"{self.server_address}:{self.server_port}"
                     },
@@ -601,7 +600,6 @@ class VRAMMetadataIPCClient:
                     "client_stats": {
                         "total_requests": self.total_requests,
                         "failed_requests": self.failed_requests,
-                        "success_rate": 0,
                         "is_connected": False,
                         "server_address": f"{self.server_address}:{self.server_port}"
                     },
