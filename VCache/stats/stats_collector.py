@@ -445,14 +445,3 @@ class StatsCollector:
             ])
         
         return "\n".join(summary)
-
-
-# Global stats collector instance
-_stats_collector = None
-
-def get_stats_collector() -> StatsCollector:
-    """Get or create the global stats collector instance."""
-    global _stats_collector
-    if _stats_collector is None:
-        _stats_collector = StatsCollector()
-    return _stats_collector
