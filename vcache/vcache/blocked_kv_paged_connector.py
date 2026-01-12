@@ -7,7 +7,7 @@ from typing import List, Optional, Union
 import torch
 
 
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.v1.gpu_connector import GPUConnectorInterface
 from lmcache.v1.memory_management import MemoryObj

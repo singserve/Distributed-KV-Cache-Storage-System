@@ -16,11 +16,11 @@ import torch
 
 # First Party
 from lmcache.config import LMCacheEngineMetadata
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.vcache.utils import VCacheKey, cdiv
 from lmcache.vcache.vcache_config import VCacheConfig
-from lmcache.vcache.vcache.vcache_engine_system import VCacheEngine, MockGPUConnector
+from lmcache.vcache.vcache.vcache_engine_system import VCacheEngine
 from lmcache.vcache.vcache.blocked_kv_paged_connector import BlockedKVPagedMemConnector
 from lmcache.vcache.integration.mooncake_lookup_client import MooncakeLookupClient
 

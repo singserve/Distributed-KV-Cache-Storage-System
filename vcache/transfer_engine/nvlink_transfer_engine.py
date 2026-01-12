@@ -11,7 +11,7 @@ import torch
 import ctypes
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.transfer_engine.transfer_engine_interface import TransferEngineInterface
 
 logger = init_logger(__name__)
@@ -77,6 +77,17 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         self.transfer_queue: List[TransferRequest] = []
         self.active_transfers: Dict[str, TransferRequest] = {}
         self.completed_transfers: Dict[str, TransferRequest] = {}
+        
+        # Statistics tracking
+        self.stats = {
+            "successful_transfers": 0,
+            "failed_transfers": 0,
+            "total_transfer_bytes": 0,
+            "successful_registers": 0,
+            "failed_registers": 0,
+            "successful_unregisters": 0,
+            "failed_unregisters": 0
+        }
         
         # Configuration
         self.max_concurrent_transfers = config.get_extra_config_value(
@@ -301,6 +312,8 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
                 request.end_time = time.time()
                 logger.error(f"Transfer {request.request_id} submission failed: "
                            f"GPU {request.source_gpu} -> GPU {request.target_gpu}")
+                with self.lock:
+                    self.stats["failed_transfers"] += 1
                 return
             
             # Store completion event for later synchronization
@@ -315,18 +328,24 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
                           f"GPU {request.source_gpu} -> GPU {request.target_gpu}, "
                           f"size: {request.size} bytes, "
                           f"time: {request.end_time - request.start_time:.3f}s")
+                with self.lock:
+                    self.stats["successful_transfers"] += 1
+                    self.stats["total_transfer_bytes"] += request.size
             else:
                 # For async transfers, mark as "submitted" not "completed"
                 request.status = "submitted"
                 logger.info(f"Transfer {request.request_id} submitted asynchronously: "
                           f"GPU {request.source_gpu} -> GPU {request.target_gpu}, "
                           f"size: {request.size} bytes")
+                # Async transfers will update stats when they complete via wait_for_transfer
             
         except Exception as e:
             request.status = "failed"
             request.end_time = time.time()
             request.error_message = str(e)
             logger.error(f"Error executing transfer {request.request_id}: {e}")
+            with self.lock:
+                self.stats["failed_transfers"] += 1
         
         finally:
             # Move from active to completed/submitted
@@ -652,6 +671,9 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
                             request.status = "completed"
                             request.end_time = time.time()
                             logger.debug(f"Transfer {request_id} completed asynchronously")
+                            # Update stats for async transfer completion
+                            self.stats["successful_transfers"] += 1
+                            self.stats["total_transfer_bytes"] += request.size
                             return True
                         # Event not completed yet, continue waiting
                 
@@ -783,19 +805,16 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         with self.lock:
             status = {
                 'engine_type': 'DistributedNVLINKTransferEngine',
-                'initialized': True,
-                'cuda_available': self.cuda_available,
-                'nvlink_available': self.nvlink_available,
                 'gpu_id': self.gpu_id,
-                'worker_thread_running': self._worker_running if hasattr(self, '_worker_running') else False,
-                'worker_thread_alive': self._worker_thread.is_alive() if self._worker_thread else False,
                 'max_concurrent_transfers': self.max_concurrent_transfers,
                 'transfer_timeout_sec': self.transfer_timeout_sec,
-                'ipc_client_available': self.ipc_client is not None,
                 'pending_transfers': len(self.transfer_queue),
                 'active_transfers': len(self.active_transfers),
                 'completed_transfers_count': len(self.completed_transfers),
             }
+            
+            # Add statistics to status
+            status.update(self.stats)
             
             return status
     
@@ -1123,6 +1142,8 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         """
         if not self.ipc_client:
             logger.warning("IPC client not available, cannot register segment")
+            with self.lock:
+                self.stats["failed_registers"] += 1
             return False
         
         try:
@@ -1140,6 +1161,8 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
             if rc != 0:
                 logger.error(f"Failed to get IPC handle for segment {segment_id}: "
                              f"CUDA error code {rc}")
+                with self.lock:
+                    self.stats["failed_registers"] += 1
                 return False
             
             handle_bytes = handle_buf.raw
@@ -1155,13 +1178,19 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
             
             if success:
                 logger.debug(f"Registered segment {segment_id} via IPC client")
+                with self.lock:
+                    self.stats["successful_registers"] += 1
             else:
                 logger.error(f"Failed to register segment {segment_id} via IPC client")
+                with self.lock:
+                    self.stats["failed_registers"] += 1
             
             return success
             
         except Exception as e:
             logger.error(f"Error registering segment {segment_id}: {e}")
+            with self.lock:
+                self.stats["failed_registers"] += 1
             return False
     
     def unregister_segment(
@@ -1183,6 +1212,8 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         """
         if not self.ipc_client:
             logger.warning("IPC client not available, cannot unregister segment")
+            with self.lock:
+                self.stats["failed_unregisters"] += 1
             return False
         
         try:
@@ -1195,13 +1226,19 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
             
             if success:
                 logger.debug(f"Unregistered segment {segment_id} via IPC client")
+                with self.lock:
+                    self.stats["successful_unregisters"] += 1
             else:
                 logger.error(f"Failed to unregister segment {segment_id} via IPC client")
+                with self.lock:
+                    self.stats["failed_unregisters"] += 1
             
             return success
             
         except Exception as e:
             logger.error(f"Error unregistering segment {segment_id}: {e}")
+            with self.lock:
+                self.stats["failed_unregisters"] += 1
             return False
     
     def __del__(self):

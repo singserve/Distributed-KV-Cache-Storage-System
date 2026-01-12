@@ -10,7 +10,7 @@ from typing import Union, Optional
 import torch
 
 
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
 from lmcache.vcache.vcache.token_database import TokenDatabase
 

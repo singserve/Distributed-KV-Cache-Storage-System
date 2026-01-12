@@ -11,7 +11,7 @@ import time
 from multiprocessing.managers import BaseManager
 import torch
 
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
 from lmcache.vcache.vram_metadata_server.gpu_vram_pool_manager import GPUVRAMPoolManager
 logger = init_logger(__name__)
@@ -45,7 +45,6 @@ class VRAMMetadataIPCServer:
         self.lock = threading.RLock()
         
         # Client connection tracking
-        self.client_connections = set()
         self.total_requests = 0
         self.request_stats = {
             'lookup_prefix': 0,
@@ -480,15 +479,15 @@ class VRAMMetadataIPCServer:
                 
                 logger.info("IPC get_stats request")
                 
-                stats = self.vram_pool_manager.get_stats()
+                manager_stats = self.vram_pool_manager.get_stats()
                 # Add server info and request statistics
-                stats['server_info'] = {
+                stats = {
                     'address': self.address,
                     'port': self.port,
                     'is_running': self.is_running,
                     'total_requests': self.total_requests,
                     'request_stats': self.request_stats.copy(),
-                    'active_clients': len(self.client_connections)
+                    'manager_stats': manager_stats
                 }
                 
                 logger.debug(f"Stats response: {stats}")

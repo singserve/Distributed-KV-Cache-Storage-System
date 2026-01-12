@@ -6,7 +6,7 @@ import time
 import torch
 
 # First Party
-from lmcache.vcache.vcache_logging import init_logger
+from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey
 
 logger = init_logger(__name__)
@@ -198,16 +198,8 @@ class GPUVRAMPoolManager:
                 "total_entries": self.total_entries,
                 "total_size_bytes": self.total_size_bytes,
                 "max_metadata_size": self.max_metadata_size,
-                "gpu_distribution": {
-                    gpu_id: len(keys) 
-                    for gpu_id, keys in self.gpu_metadata.items()
-                },
-                "transfer_stats": {},
+                "gpu_count": len(self.gpu_metadata)
             }
-            
-            # Calculate hit rate if we have access tracking
-            total_accesses = sum(entry.access_count for entry in self.metadata.values())
-            stats["total_accesses"] = total_accesses
             
             return stats
 
