@@ -23,6 +23,8 @@ The solution in this article is to build up a VRAM pool like CPU/DRAM/SSD pool l
 | Lookup(tokens)-> int| Look up in the VCache system for stored KVCache, return the number of hit tokens. This function first searches the VRAM pool; if hits, it returns the hit token count. Otherwise, it falls back to mooncake backend. |
 | Store(tokens, mask, kvcaches, slot_mapping, offset)-> None   | Store KVCaches with token ids into the VCache system. This function stores KVCaches in both VRAM and the mooncake store backend with slot mapping.        |
 |Retrieve(tokens, mask, kvcaches, slot_mapping)-> torch.Tensor | Retrieve hit KVCaches for a sequence of tokens and upload the data to the kvcaches parameter using slot mapping. This function first retrieves hit data from the VRAMpool. If no hits, it falls back to retrieve from the mooncake store backend. Returns a boolean mask indicating retrieved tokens.|
+| contains(cache_key) -> int | check if the cache key exists in the cache engine. 0 if exists in GPU VRAM, 1 if exists in storage backend, -1 if not found  |
+| get_stats() -> Dict | Get cache engine statistics and status   |
 
 ## NOTE: THE PROJECT SRC IS STILL UNDER REVISION
 
@@ -46,11 +48,15 @@ The solution in this article is to build up a VRAM pool like CPU/DRAM/SSD pool l
 
 ### run scripts to test VCache engine store() and retrieve()
 1. lmcache, vllm and mooncake are buit from source with editable option.  
-2. put `Vcache` directory in `LMcache`
-3. edit system_config.yaml to configure system settings
-4. python3 run `start_ipc_server.py` in `VCache` to start VRAM pool metadata manager  
+2. put `Vcache` directory in `LMcache/lmcache`  
+3. edit `system_config.yaml` to configure system settings  
+4. start VRAM pool metadata manager  
+   `cd VCache/vram_metadata_server && VCACHE_LOG_LEVEL=DEBUG python3 start_ipc_server.py`  
 5. run mooncake master  
-6. run test scripts  
+   `mooncake_master --enable_http_metadata_server=true --http_metadata_server_host=0.0.0.0 --http_metadata_server_port=8080`  
+6. set config file path and run test scripts  
+   `cd tests && VCACHE_LOG_LEVEL=DEBUG python3 test_cross_gpu_store_retrieve.py`  
+7. check log and metadata server log  
 ### integration with vllm (UNDER REVISION AND TEST)
 1. set up VCache system and vllm, lmcache, mooncake
 2. replace `factory.py` in vllm project with `factory.py` in `integration` to register kv connector
