@@ -8,8 +8,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import from the same directory
-from vcache_config import VCacheConfig
+from lmcache.vcache.vcache_config import VCacheConfig
 
 """
 Simple script to start the VRAM metadata IPC server only.
@@ -27,9 +26,10 @@ def start_vram_metadata_ipc_server():
         
         # Import and start the VRAM metadata IPC server
         # Import from the same directory
-        from vram_metadata_ipc_server import start_vram_metadata_ipc_server
+        from lmcache.vcache.vram_metadata_server.vram_metadata_ipc_server import start_vram_metadata_ipc_server
         
         config = create_config()
+        assert config is not None, "Failed to create VCacheConfig"
         server = start_vram_metadata_ipc_server(config=config)
         
         print("VRAM metadata IPC server started on port 9091")

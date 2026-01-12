@@ -11,7 +11,7 @@ from lmcache.vcache.logging.vcache_logging import init_logger
 from lmcache.vcache.utils import VCacheKey, dtype_to_str
 from lmcache.vcache.vcache_config import VCacheConfig
 from lmcache.v1.gpu_connector import GPUConnectorInterface
-from lmcache.vcache.transfer_engine.transfer_engine_manager import TransferEngineManager
+from lmcache.vcache.vcache.transfer_engine_manager import TransferEngineManager
 from lmcache.vcache.vcache.gpu_vram_segment_manager import GPUVRAMSegmentManager
 from lmcache.vcache.vcache.mooncake_storage_backend import MooncakeStorageBackend
 from lmcache.vcache.vcache.vram_metadata_ipc_client import get_vram_metadata_ipc_client

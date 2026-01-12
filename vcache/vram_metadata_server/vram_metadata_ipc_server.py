@@ -25,6 +25,7 @@ class VRAMMetadataIPCServer:
     """
     
     def __init__(self, config, authkey: bytes = b'vram_metadata'):
+        self.config = config
         self.address = config.get_extra_config_value(
             "vram_metadata_ipc_address", "192.168.1.86"
         )
@@ -34,7 +35,7 @@ class VRAMMetadataIPCServer:
         self.authkey = authkey
         
         # Import and instantiate the GPU VRAM pool manager using the config       
-        self.vram_pool_manager = GPUVRAMPoolManager.get_instance(self.config)
+        self.vram_pool_manager = GPUVRAMPoolManager.get_instance(config)
         
         # IPC server
         self.manager = None

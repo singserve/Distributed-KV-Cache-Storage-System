@@ -117,7 +117,7 @@ class DistributedNVLINKTransferEngine(TransferEngineInterface):
         
         try:
             import ctypes
-            libname = "./native/build/libnvlink_transfer.so"
+            libname = "../native/build/libnvlink_transfer.so"
             self.cuda_lib = ctypes.CDLL(libname)
             logger.debug(f"Loaded native nvlink helper: {libname}")
             
