@@ -24,18 +24,14 @@ The solution in this article is to build up a VRAM pool like CPU/DRAM/SSD pool l
 | Store(tokens, mask, kvcaches, slot_mapping, offset)-> None   | Store KVCaches with token ids into the VCache system. This function stores KVCaches in both VRAM and the mooncake store backend with slot mapping.        |
 |Retrieve(tokens, mask, kvcaches, slot_mapping)-> torch.Tensor | Retrieve hit KVCaches for a sequence of tokens and upload the data to the kvcaches parameter using slot mapping. This function first retrieves hit data from the VRAMpool. If no hits, it falls back to retrieve from the mooncake store backend. Returns a boolean mask indicating retrieved tokens.|
 
-## future work 
-* Code Refactoring and System Consolidation:  
-While the high-level architecture and core functionality of VCache are established, the current implementation requires refactoring to improve code quality. The interdependencies between modules, functions, and data structures need to be clarified and streamlined to enhance maintainability, robustness, and to eliminate potential defects.
-* Performance Evaluation with Real-world Workloads:  
-Although the system can launch the vLLM inference engine, a comprehensive performance evaluation using real world inference traces and datasets is essential.
-
 ## NOTE: THE PROJECT SRC IS STILL UNDER REVISION
 
 ## file organization
 **VCache**: src   
-**test**: scripts to test system  
-**vllm_integration**: vllm kv connector and factory registration  
+**test**: scripts to test system functions  
+**integration**: vllm kv connector and factory registration  
+**log.txt**: vcache engine log output when run cross gpu store and retrieve  
+**server_log.txt**: metadata server log   
 
 ## quick start
 ### setup
@@ -57,5 +53,5 @@ Although the system can launch the vLLM inference engine, a comprehensive perfor
 6. run test scripts  
 ### integration with vllm (UNDER REVISION AND TEST)
 1. set up VCache system and vllm, lmcache, mooncake
-2. replace `factory.py` in vllm project with `factory.py` in `vllm_integration` to register kv connector
-3. put kv connector in `vllm_integration` in 'kv_connector' repository in vllm project
+2. replace `factory.py` in vllm project with `factory.py` in `integration` to register kv connector
+3. put kv connector in `integration` in 'kv_connector' repository in vllm project
